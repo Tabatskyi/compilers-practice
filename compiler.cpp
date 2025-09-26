@@ -6,50 +6,103 @@
 #include <unordered_map>
 #include <regex>
 #include <cctype>
+#include <sstream>
 
 using std::string; 
 using std::string_view;
+
+struct Var { string allocaName; };
+struct IRContext {
+    std::unordered_map<string,Var> vars;
+    int tempId = 0;
+    std::ostringstream ir;
+} ctx;
+
+string trim(const string &s)
+{
+    size_t a = s.find_first_not_of(" \t\r\n");
+    if(a == string::npos) 
+        return "";
+    size_t b = s.find_last_not_of(" \t\r\n");
+    return s.substr(a, b - a + 1);
+};
+
+bool isDigits(const string &t)
+{ 
+    if(t.empty()) 
+        return false; 
+    for(char c: t) 
+        if(!std::isdigit((unsigned char)c)) 
+            return false; 
+    return true; 
+};
+
+string lowerExpr(const string &exprRaw, int curLine, struct IRContext &ctx)
+{
+    string expr = trim(exprRaw);
+    if(expr.empty()) throw std::runtime_error("Empty expression at line " + std::to_string(curLine));
+
+    std::vector<string> parts; size_t start=0; 
+    while(true)
+    {
+        size_t pos = expr.find('+', start);
+        if(pos == string::npos)
+        { 
+            parts.push_back(trim(expr.substr(start))); 
+            break; 
+        }
+
+        parts.push_back(trim(expr.substr(start, pos - start)));
+        start = pos + 1;
+    }
+    if(parts.empty()) throw std::runtime_error("Malformed expression at line "+std::to_string(curLine));
+
+    string acc;
+    for(const string &t: parts){
+        if(isDigits(t))
+            acc = acc.empty() ? t : ("(" + acc + " + " + t + ")");
+        else 
+        {
+            string tmp = "t" + std::to_string(ctx.tempId++);
+            ctx.ir << "  %" << tmp << " = load i32, i32* %" << t << "\n";
+            acc = acc.empty() ? ("%" + tmp) : ("(" + acc + " + %" + tmp + ")");
+        }
+    }
+    return acc; 
+};
 
 int main(int argc, char** argv) 
 {
     std::ifstream fin(argv[1]); 
     if(!fin)
     { 
-        std::cerr<<"Cannot open file\n"; 
+        std::cerr << "Cannot open file\n"; 
         return 1; 
     }
 
     std::string filename = argv[1];
     filename = filename.substr(0, filename.find_last_of('.'));
     std::string line; 
-    int lineNo=0; 
-    bool sawReturn=false;
+    int lineNo = 0; 
+    bool sawReturn = false;
 
     std::regex declRe(R"(^\s*var\s+([A-Za-z_][A-Za-z0-9_]*)\s*$)");
     std::regex assignRe(R"(^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$)");
     std::regex returnRe(R"(^\s*return\s+([A-Za-z_][A-Za-z0-9_]*)\s*$)");
-
-    struct Var { string allocaName; };
-    struct IRContext {
-        std::unordered_map<string,Var> vars;
-        int tempId = 0;
-        std::ostringstream ir;
-    } ctx;
     
     ctx.ir << "declare i32 @printf(i8*, ...)\n\n";
     ctx.ir << "@fmt = private constant [29 x i8] c\"Program exit with result %d\\0A\\00\"\n\n";
     ctx.ir << "define i32 @main() {\n";
-    
 
     while (std::getline(fin, line)) {
         ++lineNo;
-        if (line.find_first_not_of(" \t\r\n")==std::string::npos) continue;
+        if (line.find_first_not_of(" \t\r\n") == std::string::npos) continue;
         std::smatch m;
         if (std::regex_match(line, m, declRe)) {
-            if(sawReturn) throw std::runtime_error("Statements after return at line " + std::to_string(lineNo));
+            if (sawReturn) throw std::runtime_error("Statements after return at line " + std::to_string(lineNo));
             {
-                string var = m[1]; string exprTxt = m[2];
-                if(ctx.vars.count(var)) throw std::runtime_error("Variable re-declaration at line " + std::to_string(lineNo));
+                string var = m[1];
+                if (ctx.vars.count(var)) throw std::runtime_error("Variable re-declaration at line " + std::to_string(lineNo));
                 ctx.ir << "  %" << var << " = alloca i32\n";
                 ctx.vars[var] = Var{var};
                 continue;
@@ -61,7 +114,8 @@ int main(int argc, char** argv)
                 auto var = m[1];
                 auto expr = m[2];
                 if(!ctx.vars.count(var)) throw std::runtime_error("Undeclared variable at line " + std::to_string(lineNo));
-                ctx.ir << "  store i32 " << expr << ", i32* %" << var << "\n";
+                string val = lowerExpr(expr, lineNo, ctx);
+                ctx.ir << "  store i32 " << val << ", i32* %" << var << "\n";
                 continue;
             }
         }
@@ -70,8 +124,9 @@ int main(int argc, char** argv)
             sawReturn = true;
             {
                 auto var = m[1];
+                if(!ctx.vars.count(var)) throw std::runtime_error("Return of undeclared variable at line "+std::to_string(lineNo));
                 ctx.ir << "  %retv = load i32, i32* %" << var << "\n";
-                ctx.ir << "  %fmtptr = getelementptr [31 x i8], [31 x i8]* @fmt, i32 0, i32 0\n";
+                ctx.ir << "  %fmtptr = getelementptr [29 x i8], [29 x i8]* @fmt, i32 0, i32 0\n";
                 ctx.ir << "  call i32 (i8*, ...) @printf(i8* %fmtptr, i32 %retv)\n";
                 ctx.ir << "  ret i32 %retv\n";
                 continue;
@@ -86,7 +141,7 @@ int main(int argc, char** argv)
     }
 
     ctx.ir << "}\n";
-
+    fin.close();
 
     std::ofstream fout(filename + ".ll");
     fout << ctx.ir.str();
