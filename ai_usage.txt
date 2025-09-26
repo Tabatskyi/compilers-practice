@@ -99,3 +99,75 @@ Let me know if you’d like:
 - Tests or a Makefile
 
 I can continue with any of those. Just say the word.
+
+Tabatskyi: llc-20: error: llc-20: input.ll:10:18: error: expected ')' at end of argument list
+  store i32 (%t0 + 3), i32* %y
+                 ^
+can you fix it under existing implementation?
+
+GitHub Copilot: 
+Reading current compiler.cpp to see the user's manual edits before applying a minimal fix for the invalid `store i32 (%t0 + 3)` emission. 
+
+Read [](file:///mnt/c/Users/Vasenka88/source/repos/compilers/practice_1/compiler.cpp)
+
+Updating `lowerExpr` in compiler.cpp to emit proper LLVM add instructions instead of invalid inline arithmetic expressions. 
+
+Using "Apply Patch"
+
+```
+string acc; bool haveAcc = false;
+for(const string &t: parts){
+    string val;
+    if(isDigits(t)) {
+        val = t; // immediate constant
+    } else {
+        // validate identifier
+        if(!std::regex_match(t, std::regex(R"([A-Za-z_][A-Za-z0-9_]*)")))
+            throw std::runtime_error("Invalid token '" + t + "' at line " + std::to_string(curLine));
+        if(!ctx.vars.count(t))
+            throw std::runtime_error("Use of undeclared variable '" + t + "' at line " + std::to_string(curLine));
+        string tmp = "t" + std::to_string(ctx.tempId++);
+        ctx.ir << "  %" << tmp << " = load i32, i32* %" << t << "\n";
+        val = "%" + tmp;
+    }
+    if(!haveAcc) { acc = val; haveAcc = true; continue; }
+    string tmpAdd = "t" + std::to_string(ctx.tempId++);
+    ctx.ir << "  %" << tmpAdd << " = add i32 " << acc << ", " << val << "\n";
+    acc = "%" + tmpAdd;
+}
+return acc; 
+```
+Marking expression lowering todo complete and updating remaining todos. 
+
+Starting (5/5) *Provide build & test instructions*
+
+Updated `lowerExpr` so it now emits valid LLVM IR:
+
+For `y = x + 3` you should now see something like:
+  %t0 = load i32, i32* %x
+  %t1 = add i32 %t0, 3
+  store i32 %t1, i32* %y
+
+What to do now:
+
+Compile:
+```bash
+g++ -std=c++17 compiler.cpp -o compiler
+```
+
+Generate IR:
+```bash
+./compiler input.txt
+cat input.ll
+```
+
+Lower & link:
+```bash
+llc-20 -filetype=obj -relocation-model=pic input.ll -o input.o
+clang input.o -o program
+./program
+```
+
+If you still get an error, paste the new input.ll and I’ll adjust further, but this change removes the invalid `( %t0 + 3 )` style emission.
+
+Want subtraction or parentheses next? Just ask.

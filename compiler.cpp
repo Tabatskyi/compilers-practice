@@ -51,22 +51,39 @@ string lowerExpr(const string &exprRaw, int curLine, struct IRContext &ctx)
             parts.push_back(trim(expr.substr(start))); 
             break; 
         }
-
         parts.push_back(trim(expr.substr(start, pos - start)));
         start = pos + 1;
     }
     if(parts.empty()) throw std::runtime_error("Malformed expression at line "+std::to_string(curLine));
 
-    string acc;
-    for(const string &t: parts){
-        if(isDigits(t))
-            acc = acc.empty() ? t : ("(" + acc + " + " + t + ")");
+    string acc; 
+    bool haveAcc = false;
+    for(const string &t: parts)
+    {
+        string val;
+        if(isDigits(t)) 
+        {
+            val = t; 
+        } 
         else 
         {
+            if(!std::regex_match(t, std::regex(R"([A-Za-z_][A-Za-z0-9_]*)")))
+                throw std::runtime_error("Invalid token '" + t + "' at line " + std::to_string(curLine));
+            if(!ctx.vars.count(t))
+                throw std::runtime_error("Use of undeclared variable '" + t + "' at line " + std::to_string(curLine));
             string tmp = "t" + std::to_string(ctx.tempId++);
             ctx.ir << "  %" << tmp << " = load i32, i32* %" << t << "\n";
-            acc = acc.empty() ? ("%" + tmp) : ("(" + acc + " + %" + tmp + ")");
+            val = "%" + tmp;
         }
+        if(!haveAcc) 
+        { 
+            acc = val; 
+            haveAcc = true; 
+            continue; 
+        }
+        string tmpAdd = "t" + std::to_string(ctx.tempId++);
+        ctx.ir << "  %" << tmpAdd << " = add i32 " << acc << ", " << val << "\n";
+        acc = "%" + tmpAdd;
     }
     return acc; 
 };
