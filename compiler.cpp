@@ -16,10 +16,9 @@ struct Token
 };
 std::vector<Token> tokens;
 
-struct Var { string allocaName; };
 struct IRContext 
 {
-    std::unordered_map<string, Var> vars;
+    std::unordered_map<string, string> vars;
     int tempId = 0;
     std::ostringstream ir;
 } ctx;
@@ -62,12 +61,6 @@ void lexSource(const string &source)
                     ++i;
                     continue;
                 }
-                if (c == '\n') 
-                {
-                    tokens.push_back(Token{"\n", "newline", "delimiter"});
-                    ++i;
-                    continue;
-                }
                 if (std::isspace(static_cast<unsigned char>(c))) 
                 {
                     ++i;
@@ -95,29 +88,37 @@ void lexSource(const string &source)
                     ++i;
                     continue;
                 }
-                if (c == '{') 
+
+                switch (c)
                 {
-                    tokens.push_back(Token{"{", "block", "start"});
-                    ++i;
-                    continue;
-                }
-                if (c == '}') 
-                {
-                    tokens.push_back(Token{"}", "block", "end"});
-                    ++i;
-                    continue;
-                }
-                if (c == '=') 
-                {
-                    tokens.push_back(Token{"=", "operator", "assign"});
-                    ++i;
-                    continue;
-                }
-                if (c == '+') 
-                {
-                    tokens.push_back(Token{"+", "operator", "add"});
-                    ++i;
-                    continue;
+                    case '\n':
+                        tokens.push_back(Token{"\n", "newline", "delimiter"});
+                        ++i;
+                        continue;
+                    case '{':
+                        tokens.push_back(Token{"{", "block", "start"});
+                        ++i;
+                        continue;
+                    case '}':
+                        tokens.push_back(Token{"}", "block", "end"});
+                        ++i;
+                        continue;
+                    case '=':
+                        tokens.push_back(Token{"=", "operator", "assign"});
+                        ++i;
+                        continue;
+                    case '+':
+                        tokens.push_back(Token{"+", "operator", "add"});
+                        ++i;
+                        continue;
+                    case '-':
+                        tokens.push_back(Token{"-", "operator", "sub"});
+                        ++i;
+                        continue;
+                    case '*':
+                        tokens.push_back(Token{"*", "operator", "mul"});
+                        ++i;
+                        continue;
                 }
 
             case State::Identifier:
@@ -153,20 +154,21 @@ string lowerExpr(const std::vector<Token> &exprTokens, IRContext &ctx)
     string acc;
     for (size_t i = 0; i < exprTokens.size(); ++i) 
     {
-        const Token &tok = exprTokens[i];
+        const Token &token = exprTokens[i];
         if (i % 2 == 0) 
         {
             string val;
-            if (tok.kind == "constant" && tok.type == "numeric") 
+            if (token.kind == "constant" && token.type == "numeric") 
             {
-                val = tok.lexeme;
+                val = token.lexeme;
             } 
-            else if (tok.kind == "identifier" && tok.type == "name") {
+            else if (token.kind == "identifier" && token.type == "name") {
                 
                 string tmp = "t" + std::to_string(ctx.tempId++);
-                ctx.ir << "  %" << tmp << " = load i32, i32* %" << tok.lexeme << "\n";
+                ctx.ir << "  %" << tmp << " = load i32, i32* %" << token.lexeme << "\n";
                 val = "%" + tmp;
-            } else 
+            } 
+            else 
             {
                 return "";
             }
@@ -183,7 +185,7 @@ string lowerExpr(const std::vector<Token> &exprTokens, IRContext &ctx)
             }
         } else 
         {
-            if (tok.lexeme != "+" || tok.kind != "operator")
+            if (token.lexeme != "+" || token.kind != "operator")
                 return "";
         }
     }
@@ -234,9 +236,9 @@ int main(int argc, char **argv)
             continue;
         }
 
-        const Token &tok = tokens[idx];
+        const Token &token = tokens[idx];
 
-        if (tok.lexeme == "var" && tok.kind == "keyword" && tok.type == "declaration") 
+        if (token.lexeme == "var" && token.kind == "keyword" && token.type == "declaration") 
         {
             if (sawReturn)
             {
@@ -258,12 +260,12 @@ int main(int argc, char **argv)
                 return 3;
             }
             ctx.ir << "  %" << nameTok.lexeme << " = alloca i32\n";
-            ctx.vars[nameTok.lexeme] = Var{nameTok.lexeme};
+            ctx.vars[nameTok.lexeme] = nameTok.lexeme;
             ++idx;
             continue;
         }
 
-        if (tok.lexeme == "return" && tok.kind == "keyword" && tok.type == "control") {
+        if (token.lexeme == "return" && token.kind == "keyword" && token.type == "control") {
             if (sawReturn)
             {
                 std::cerr << "Error: code after return statement" << std::endl;
@@ -317,20 +319,20 @@ int main(int argc, char **argv)
             break;
         }
 
-        if (tok.kind == "identifier" && tok.type == "name") 
+        if (token.kind == "identifier" && token.type == "name") 
         {
             if (sawReturn)
             {
                 std::cerr << "Error: code after return statement\n";
                 return 3;
             }
-            if (!ctx.vars.count(tok.lexeme))
+            if (!ctx.vars.count(token.lexeme))
             {
-                std::cerr << "Error: undeclared variable " << tok.lexeme << std::endl;
+                std::cerr << "Error: undeclared variable " << token.lexeme << std::endl;
                 return 4;
             }
 
-            string varName = tok.lexeme;
+            string varName = token.lexeme;
             ++idx;
             if (idx >= tokens.size() || tokens[idx].lexeme != "=")
             {
@@ -365,7 +367,7 @@ int main(int argc, char **argv)
             continue;
         }
 
-        std::cerr << "Error: unexpected token " << tok.lexeme << std::endl;
+        std::cerr << "Error: unexpected token " << token.lexeme << std::endl;
         return 1;
     }
 
