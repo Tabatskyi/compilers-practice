@@ -1,17 +1,14 @@
 #include <iostream>
 #include <fstream>
 #include <string>
-#include <string_view>
 #include <vector>
 #include <unordered_map>
-#include <regex>
 #include <cctype>
 #include <sstream>
 
-using std::string; 
-using std::string_view;
+using std::string;
 
-struct Token 
+struct Token
 {
     string lexeme;
     string kind;
@@ -22,152 +19,341 @@ std::vector<Token> tokens;
 struct Var { string allocaName; };
 struct IRContext 
 {
-    std::unordered_map<string,Var> vars;
+    std::unordered_map<string, Var> vars;
     int tempId = 0;
     std::ostringstream ir;
 } ctx;
 
-string trim(const string &s)
+static const std::unordered_map<string, std::pair<string, string>> keywordMap = 
 {
-    size_t a = s.find_first_not_of(" \t\r\n");
-    if(a == string::npos) 
-        return "";
-    size_t b = s.find_last_not_of(" \t\r\n");
-    return s.substr(a, b - a + 1);
+    {"var", {"keyword", "declaration"}},
+    {"mut", {"keyword", "specifier"}},
+    {"return", {"keyword", "control"}},
+    {"i32", {"keyword", "typename"}}
 };
 
-bool isDigits(const string &t)
-{ 
-    if(t.empty()) 
-        return false; 
-    for(char c: t) 
-        if(!std::isdigit((unsigned char)c)) 
-            return false; 
-    return true; 
-};
-
-string lowerExpr(const string &exprRaw, int curLine, struct IRContext &ctx)
+std::pair<string, string> classifyIdentifier(const string &ident) 
 {
-    string expr = trim(exprRaw);
-    if(expr.empty()) throw std::runtime_error("Empty expression at line " + std::to_string(curLine));
+    auto it = keywordMap.find(ident);
+    if (it != keywordMap.end()) return it->second;
+    return {"identifier", "name"};
+}
 
-    std::vector<string> parts; size_t start=0; 
-    while(true)
+void lexSource(const string &source) 
+{
+    tokens.clear();
+    enum class State { Start, Identifier, Number };
+
+    State state = State::Start;
+    string buffer;
+    size_t i = 0;
+
+    while (i <= source.size()) 
     {
-        size_t pos = expr.find('+', start);
-        if(pos == string::npos)
-        { 
-            parts.push_back(trim(expr.substr(start))); 
-            break; 
-        }
-        parts.push_back(trim(expr.substr(start, pos - start)));
-        start = pos + 1;
-    }
-    if(parts.empty()) throw std::runtime_error("Malformed expression at line "+std::to_string(curLine));
+        char c = (i < source.size()) ? source[i] : '\0';
+        bool atEnd = (i == source.size());
+        auto kindType = std::make_pair(string(), string());
 
-    string acc; 
-    bool haveAcc = false;
-    for(const string &t: parts)
-    {
-        string val;
-        if(isDigits(t)) 
+        switch (state) 
         {
-            val = t; 
-        } 
-        else 
-        {
-            if(!std::regex_match(t, std::regex(R"([A-Za-z_][A-Za-z0-9_]*)")))
-                throw std::runtime_error("Invalid token '" + t + "' at line " + std::to_string(curLine));
-            if(!ctx.vars.count(t))
-                throw std::runtime_error("Use of undeclared variable '" + t + "' at line " + std::to_string(curLine));
-            string tmp = "t" + std::to_string(ctx.tempId++);
-            ctx.ir << "  %" << tmp << " = load i32, i32* %" << t << "\n";
-            val = "%" + tmp;
-        }
-        if(!haveAcc) 
-        { 
-            acc = val; 
-            haveAcc = true; 
-            continue; 
-        }
-        string tmpAdd = "t" + std::to_string(ctx.tempId++);
-        ctx.ir << "  %" << tmpAdd << " = add i32 " << acc << ", " << val << "\n";
-        acc = "%" + tmpAdd;
-    }
-    return acc; 
-};
+            case State::Start:
+                if (atEnd) 
+                {
+                    ++i;
+                    continue;
+                }
+                if (c == '\n') 
+                {
+                    ++i;
+                    continue;
+                }
+                if (std::isspace(static_cast<unsigned char>(c))) 
+                {
+                    ++i;
+                    continue;
+                }
+                if (c == '/' && i + 1 < source.size() && source[i + 1] == '/') 
+                {
+                    i += 2;
+                    while (i < source.size() && source[i] != '\n') ++i;
+                    continue;
+                }
+                if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') 
+                {
+                    buffer.clear();
+                    buffer.push_back(c);
+                    state = State::Identifier;
+                    ++i;
+                    continue;
+                }
+                if (std::isdigit(static_cast<unsigned char>(c))) 
+                {
+                    buffer.clear();
+                    buffer.push_back(c);
+                    state = State::Number;
+                    ++i;
+                    continue;
+                }
+                if (c == '{') 
+                {
+                    tokens.push_back(Token{"{", "block", "start"});
+                    ++i;
+                    continue;
+                }
+                if (c == '}') 
+                {
+                    tokens.push_back(Token{"}", "block", "end"});
+                    ++i;
+                    continue;
+                }
+                if (c == '=') 
+                {
+                    tokens.push_back(Token{"=", "operator", "assign"});
+                    ++i;
+                    continue;
+                }
+                if (c == '+') 
+                {
+                    tokens.push_back(Token{"+", "operator", "add"});
+                    ++i;
+                    continue;
+                }
 
-int main(int argc, char** argv) 
+            case State::Identifier:
+                if (!atEnd && (std::isalnum(static_cast<unsigned char>(c)) || c == '_')) 
+                {
+                    buffer.push_back(c);
+                    ++i;
+                    continue;
+                }
+                kindType = classifyIdentifier(buffer);
+                tokens.push_back(Token{buffer, kindType.first, kindType.second});
+                buffer.clear();
+                state = State::Start;
+                continue;
+
+            case State::Number:
+                if (!atEnd && std::isdigit(static_cast<unsigned char>(c))) 
+                {
+                    buffer.push_back(c);
+                    ++i;
+                    continue;
+                }
+                tokens.push_back(Token{buffer, "constant", "numeric"});
+                buffer.clear();
+                state = State::Start;
+                continue;
+        }
+    }
+}
+
+string lowerExpr(const std::vector<Token> &exprTokens, IRContext &ctx) 
 {
-    std::ifstream fin(argv[1]); 
-    if(!fin)
-    { 
-        std::cerr << "Cannot open file\n"; 
-        return 1; 
+    string acc;
+    for (size_t i = 0; i < exprTokens.size(); ++i) 
+    {
+        const Token &tok = exprTokens[i];
+        if (i % 2 == 0) 
+        {
+            string val;
+            if (tok.kind == "constant" && tok.type == "numeric") 
+            {
+                val = tok.lexeme;
+            } 
+            else if (tok.kind == "identifier" && tok.type == "name") {
+                
+                string tmp = "t" + std::to_string(ctx.tempId++);
+                ctx.ir << "  %" << tmp << " = load i32, i32* %" << tok.lexeme << "\n";
+                val = "%" + tmp;
+            } else 
+            {
+                return "";
+            }
+
+            if (i == 0) 
+            {
+                acc = val;
+            } 
+            else 
+            {
+                string tmpAdd = "t" + std::to_string(ctx.tempId++);
+                ctx.ir << "  %" << tmpAdd << " = add i32 " << acc << ", " << val << "\n";
+                acc = "%" + tmpAdd;
+            }
+        } else 
+        {
+            if (tok.lexeme != "+" || tok.kind != "operator")
+                return "";
+        }
+    }
+    return acc;
+}
+
+int main(int argc, char **argv)
+{
+    if (argc < 2) 
+    {
+        std::cerr << "Usage: compiler <source>\n";
+        return 1;
     }
 
-    std::string filename = argv[1];
-    filename = filename.substr(0, filename.find_last_of('.'));
-    std::string line; 
-    int lineNo = 0; 
-    bool sawReturn = false;
+    std::ifstream fin(argv[1]);
+    if (!fin) 
+    {
+        std::cerr << "Cannot open file\n";
+        return 1;
+    }
 
-    std::regex declRe(R"(^\s*var\s+([A-Za-z_][A-Za-z0-9_]*)\s*$)");
-    std::regex assignRe(R"(^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$)");
-    std::regex returnRe(R"(^\s*return\s+([A-Za-z_][A-Za-z0-9_]*)\s*$)");
-    
+    std::ostringstream buffer;
+    buffer << fin.rdbuf();
+    string source = buffer.str();
+    fin.close();
+
+    ctx.vars.clear();
+    ctx.tempId = 0;
+    ctx.ir.str("");
+    ctx.ir.clear();
+
+    lexSource(source);
+
     ctx.ir << "declare i32 @printf(i8*, ...)\n\n";
     ctx.ir << "@fmt = private constant [29 x i8] c\"Program exit with result %d\\0A\\00\"\n\n";
     ctx.ir << "define i32 @main() {\n";
 
-    while (std::getline(fin, line)) {
-        ++lineNo;
-        if (line.find_first_not_of(" \t\r\n") == std::string::npos) continue;
-        std::smatch m;
-        if (std::regex_match(line, m, declRe)) {
-            if (sawReturn) throw std::runtime_error("Statements after return at line " + std::to_string(lineNo));
+    size_t idx = 0;
+    bool sawReturn = false;
+
+    while (true) 
+    {
+        if (idx >= tokens.size()) break;
+
+        const Token &tok = tokens[idx];
+
+        if (tok.lexeme == "var" && tok.kind == "keyword" && tok.type == "declaration") 
+        {
+            if (sawReturn)
             {
-                string var = m[1];
-                if (ctx.vars.count(var)) throw std::runtime_error("Variable re-declaration at line " + std::to_string(lineNo));
-                ctx.ir << "  %" << var << " = alloca i32\n";
-                ctx.vars[var] = Var{var};
-                continue;
+                std::cerr << "Error: code after return statement" << std::endl;
+                return 3;
             }
-        }
-        if (std::regex_match(line, m, assignRe)) {
-            if(sawReturn) throw std::runtime_error("Statements after return at line " + std::to_string(lineNo));
+            ++idx;
+
+            if (idx >= tokens.size() || tokens[idx].kind != "identifier")
             {
-                auto var = m[1];
-                auto expr = m[2];
-                if(!ctx.vars.count(var)) throw std::runtime_error("Undeclared variable at line " + std::to_string(lineNo));
-                string val = lowerExpr(expr, lineNo, ctx);
-                ctx.ir << "  store i32 " << val << ", i32* %" << var << "\n";
-                continue;
+                std::cerr << "Error: expected identifier after 'var'" << std::endl;
+                return 2;
             }
+            const Token &nameTok = tokens[idx];
+
+            if (ctx.vars.count(nameTok.lexeme))
+            {
+                std::cerr << "Error: variable " << nameTok.lexeme << " is already declared" << std::endl;
+                return 3;
+            }
+            ctx.ir << "  %" << nameTok.lexeme << " = alloca i32\n";
+            ctx.vars[nameTok.lexeme] = Var{nameTok.lexeme};
+            ++idx;
+            continue;
         }
-        if (std::regex_match(line, m, returnRe)) {
-            if(sawReturn) throw std::runtime_error("Multiple return statements (line " + std::to_string(lineNo) + ")");
+
+        if (tok.lexeme == "return" && tok.kind == "keyword" && tok.type == "control") {
+            if (sawReturn)
+            {
+                std::cerr << "Error: code after return statement" << std::endl;
+                return 5;
+            }
             sawReturn = true;
+            ++idx;
+
+            std::vector<Token> exprTokens;
+            while (idx < tokens.size()) 
             {
-                auto var = m[1];
-                if(!ctx.vars.count(var)) throw std::runtime_error("Return of undeclared variable at line "+std::to_string(lineNo));
-                ctx.ir << "  %retv = load i32, i32* %" << var << "\n";
-                ctx.ir << "  %fmtptr = getelementptr [29 x i8], [29 x i8]* @fmt, i32 0, i32 0\n";
-                ctx.ir << "  call i32 (i8*, ...) @printf(i8* %fmtptr, i32 %retv)\n";
-                ctx.ir << "  ret i32 %retv\n";
-                continue;
+                exprTokens.push_back(tokens[idx]);
+                ++idx;
             }
+
+            if (exprTokens.empty())
+            {
+                std::cerr << "Error: expected expression after 'return'" << std::endl;
+                return 6;
+            }
+
+            string retVal = lowerExpr(exprTokens, ctx);
+            string retReg = retVal;
+
+            if (retReg.empty())
+            {
+                std::cerr << "Error: invalid return expression" << std::endl;
+                return 7;
+            }
+
+            if (retReg[0] != '%') 
+            {
+                string tmp = "t" + std::to_string(ctx.tempId++);
+                ctx.ir << "  %" << tmp << " = add i32 0, " << retReg << "\n";
+                retReg = "%" + tmp;
+            }
+
+            ctx.ir << "  %fmtptr = getelementptr [29 x i8], [29 x i8]* @fmt, i32 0, i32 0\n";
+            ctx.ir << "  call i32 (i8*, ...) @printf(i8* %fmtptr, i32 " << retReg << ")\n";
+            ctx.ir << "  ret i32 " << retReg << "\n";
+
+            if (idx < tokens.size())
+            {
+                std::cerr << "Error: code after return statement" << std::endl;
+                return 3;
+            }
+            break;
         }
-        throw std::runtime_error("Syntax error line " + std::to_string(lineNo)+": " + line);
-    }
-    if(!sawReturn) 
-    { 
-        std::cerr<<"Error: no return statement\n"; 
-        return 2; 
+
+        if (tok.kind == "identifier" && tok.type == "name") 
+        {
+            if (sawReturn)
+            {
+                std::cerr << "Error: code after return statement\n";
+                return 3;
+            }
+            if (!ctx.vars.count(tok.lexeme))
+            {
+                std::cerr << "Error: undeclared variable " << tok.lexeme << std::endl;
+                return 4;
+            }
+
+            string varName = tok.lexeme;
+            ++idx;
+            if (idx >= tokens.size() || tokens[idx].lexeme != "=")
+            {
+                std::cerr << "Error: expected '=' after identifier " << varName << std::endl;
+                return 5;
+            }
+            ++idx;
+
+            std::vector<Token> exprTokens;
+            while (idx < tokens.size()) 
+            {
+                exprTokens.push_back(tokens[idx]);
+                ++idx;
+            }
+            if (exprTokens.empty())
+            {
+                std::cerr << "Error: expected expression after '='" << std::endl;
+                return 6;
+            }
+
+            string val = lowerExpr(exprTokens, ctx);
+            ctx.ir << "  store i32 " << val << ", i32* %" << varName << "\n";
+            continue;
+        }
+
+        std::cerr << "Error: unexpected token " << tok.lexeme << std::endl;
+        return 1;
     }
 
     ctx.ir << "}\n";
-    fin.close();
+
+    string filename = argv[1];
+    size_t dot = filename.find_last_of('.');
+    if (dot != string::npos) filename = filename.substr(0, dot);
 
     std::ofstream fout(filename + ".ll");
     fout << ctx.ir.str();
