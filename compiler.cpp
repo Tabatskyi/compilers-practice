@@ -64,6 +64,7 @@ void lexSource(const string &source)
                 }
                 if (c == '\n') 
                 {
+                    tokens.push_back(Token{"\n", "newline", "delimiter"});
                     ++i;
                     continue;
                 }
@@ -193,7 +194,7 @@ int main(int argc, char **argv)
 {
     if (argc < 2) 
     {
-        std::cerr << "Usage: compiler <source>\n";
+        std::cerr << "Usage: compiler <source> <output>" << std::endl;
         return 1;
     }
 
@@ -226,6 +227,12 @@ int main(int argc, char **argv)
     while (true) 
     {
         if (idx >= tokens.size()) break;
+
+        if (tokens[idx].kind == "newline")
+        {
+            ++idx;
+            continue;
+        }
 
         const Token &tok = tokens[idx];
 
@@ -266,9 +273,13 @@ int main(int argc, char **argv)
             ++idx;
 
             std::vector<Token> exprTokens;
-            while (idx < tokens.size()) 
+            while (idx < tokens.size() && tokens[idx].kind != "newline") 
             {
                 exprTokens.push_back(tokens[idx]);
+                ++idx;
+            }
+            if (idx < tokens.size() && tokens[idx].kind == "newline")
+            {
                 ++idx;
             }
 
@@ -329,9 +340,13 @@ int main(int argc, char **argv)
             ++idx;
 
             std::vector<Token> exprTokens;
-            while (idx < tokens.size()) 
+            while (idx < tokens.size() && tokens[idx].kind != "newline") 
             {
                 exprTokens.push_back(tokens[idx]);
+                ++idx;
+            }
+            if (idx < tokens.size() && tokens[idx].kind == "newline")
+            {
                 ++idx;
             }
             if (exprTokens.empty())
@@ -341,6 +356,11 @@ int main(int argc, char **argv)
             }
 
             string val = lowerExpr(exprTokens, ctx);
+            if (val.empty())
+            {
+                std::cerr << "Error: invalid expression in assignment to " << varName << std::endl;
+                return 8;
+            }
             ctx.ir << "  store i32 " << val << ", i32* %" << varName << "\n";
             continue;
         }
@@ -350,12 +370,21 @@ int main(int argc, char **argv)
     }
 
     ctx.ir << "}\n";
+    string filename;
 
-    string filename = argv[1];
-    size_t dot = filename.find_last_of('.');
-    if (dot != string::npos) filename = filename.substr(0, dot);
-
-    std::ofstream fout(filename + ".ll");
+    if (argc >= 3) 
+    {
+        filename = argv[2];
+    }
+    else
+    {
+        filename = argv[1];
+        size_t dot = filename.find_last_of('.');
+        if (dot != string::npos) filename = filename.substr(0, dot);
+        filename += ".ll";
+    }
+    
+    std::ofstream fout(filename);
     fout << ctx.ir.str();
     fout.close();
 
