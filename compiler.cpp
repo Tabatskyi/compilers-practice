@@ -11,8 +11,17 @@
 using std::string; 
 using std::string_view;
 
+struct Token 
+{
+    string lexeme;
+    string kind;
+    string type;
+};
+std::vector<Token> tokens;
+
 struct Var { string allocaName; };
-struct IRContext {
+struct IRContext 
+{
     std::unordered_map<string,Var> vars;
     int tempId = 0;
     std::ostringstream ir;
