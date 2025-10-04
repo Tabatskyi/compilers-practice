@@ -8,202 +8,235 @@
 
 using std::string;
 
+enum class TokenType
+{
+    Newline,
+    Identifier,
+    Number,
+    Var,
+    Mut,
+    Return,
+    I32,
+    BlockStart,
+    BlockEnd,
+    Assign,
+    Add,
+    Sub,
+    Mul
+};
+
 struct Token
 {
     string lexeme;
-    string kind;
-    string type;
+    TokenType type;
 };
-std::vector<Token> tokens;
 
-struct IRContext 
+struct IRContext
 {
-    std::unordered_map<string, string> vars;
+    std::unordered_map<string, bool> vars;
     int tempId = 0;
     std::ostringstream ir;
-} ctx;
-
-static const std::unordered_map<string, std::pair<string, string>> keywordMap = 
-{
-    {"var", {"keyword", "declaration"}},
-    {"mut", {"keyword", "specifier"}},
-    {"return", {"keyword", "control"}},
-    {"i32", {"keyword", "typename"}}
 };
 
-std::pair<string, string> classifyIdentifier(const string &ident) 
+static const std::unordered_map<string, TokenType> keywordMap =
+{
+    {"var", TokenType::Var},
+    {"mut", TokenType::Mut},
+    {"return", TokenType::Return},
+    {"i32", TokenType::I32}
+};
+
+TokenType classifyIdentifier(const string &ident)
 {
     auto it = keywordMap.find(ident);
-    if (it != keywordMap.end()) return it->second;
-    return {"identifier", "name"};
+    return (it != keywordMap.end()) ? it->second : TokenType::Identifier;
 }
 
-void lexSource(const string &source) 
+std::vector<Token> lexSource(const string &source)
 {
-    tokens.clear();
+    std::vector<Token> out;
     enum class State { Start, Identifier, Number };
-
     State state = State::Start;
     string buffer;
-    size_t i = 0;
 
-    while (i <= source.size()) 
+    for (size_t i = 0; i <= source.size(); )
     {
         char c = (i < source.size()) ? source[i] : '\0';
         bool atEnd = (i == source.size());
-        auto kindType = std::make_pair(string(), string());
+        TokenType kind;
 
-        switch (state) 
+        switch (state)
         {
             case State::Start:
-                if (atEnd) 
+                if (atEnd)
                 {
                     ++i;
                     continue;
                 }
                 if (c == '\n')
                 {
-                    tokens.push_back(Token{"\n", "newline", "delimiter"});
+                    out.push_back(Token{"\n", TokenType::Newline});
                     ++i;
                     continue;
                 }
-                if (std::isspace(static_cast<unsigned char>(c))) 
+                if (std::isspace(static_cast<unsigned char>(c)))
                 {
                     ++i;
                     continue;
                 }
-                if (c == '/' && i + 1 < source.size() && source[i + 1] == '/') 
+                if (c == '/' && i + 1 < source.size() && source[i + 1] == '/')
                 {
                     i += 2;
                     while (i < source.size() && source[i] != '\n') ++i;
                     continue;
                 }
-                if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') 
+                if (std::isalpha(static_cast<unsigned char>(c)) || c == '_')
                 {
-                    buffer.clear();
-                    buffer.push_back(c);
+                    buffer.assign(1, c);
                     state = State::Identifier;
                     ++i;
                     continue;
                 }
-                if (std::isdigit(static_cast<unsigned char>(c))) 
+                if (std::isdigit(static_cast<unsigned char>(c)))
                 {
-                    buffer.clear();
-                    buffer.push_back(c);
+                    buffer.assign(1, c);
                     state = State::Number;
                     ++i;
                     continue;
                 }
 
+                kind = TokenType::Newline;
                 switch (c)
                 {
-                    case '{':
-                        tokens.push_back(Token{"{", "block", "start"});
-                        ++i;
-                        continue;
-                    case '}':
-                        tokens.push_back(Token{"}", "block", "end"});
-                        ++i;
-                        continue;
-                    case '=':
-                        tokens.push_back(Token{"=", "operator", "assign"});
-                        ++i;
-                        continue;
-                    case '+':
-                        tokens.push_back(Token{"+", "operator", "add"});
-                        ++i;
-                        continue;
-                    case '-':
-                        tokens.push_back(Token{"-", "operator", "sub"});
-                        ++i;
-                        continue;
-                    case '*':
-                        tokens.push_back(Token{"*", "operator", "mul"});
-                        ++i;
-                        continue;
+                    case '{': kind = TokenType::BlockStart; break;
+                    case '}': kind = TokenType::BlockEnd; break;
+                    case '=': kind = TokenType::Assign; break;
+                    case '+': kind = TokenType::Add; break;
+                    case '-': kind = TokenType::Sub; break;
+                    case '*': kind = TokenType::Mul; break;
+                    default: ++i; continue;
                 }
+                out.push_back(Token{string(1, c), kind});
+                ++i;
+                continue;
 
             case State::Identifier:
-                if (!atEnd && (std::isalnum(static_cast<unsigned char>(c)) || c == '_')) 
+                if (!atEnd && (std::isalnum(static_cast<unsigned char>(c)) || c == '_'))
                 {
                     buffer.push_back(c);
                     ++i;
                     continue;
                 }
-                kindType = classifyIdentifier(buffer);
-                tokens.push_back(Token{buffer, kindType.first, kindType.second});
+                out.push_back(Token{buffer, classifyIdentifier(buffer)});
                 buffer.clear();
                 state = State::Start;
                 continue;
 
             case State::Number:
-                if (!atEnd && std::isdigit(static_cast<unsigned char>(c))) 
+                if (!atEnd && std::isdigit(static_cast<unsigned char>(c)))
                 {
                     buffer.push_back(c);
                     ++i;
                     continue;
                 }
-                tokens.push_back(Token{buffer, "constant", "numeric"});
+                out.push_back(Token{buffer, TokenType::Number});
                 buffer.clear();
                 state = State::Start;
                 continue;
         }
     }
+
+    return out;
 }
 
-string lowerExpr(const std::vector<Token> &exprTokens, IRContext &ctx) 
+string lowerExpr(const std::vector<Token> &exprTokens, IRContext &ctx)
 {
     string acc;
-    for (size_t i = 0; i < exprTokens.size(); ++i) 
+    for (size_t i = 0; i < exprTokens.size(); ++i)
     {
         const Token &token = exprTokens[i];
-        if (i % 2 == 0) 
+        if ((i & 1) == 0)
         {
             string val;
-            if (token.kind == "constant" && token.type == "numeric") 
+            if (token.type == TokenType::Number)
             {
                 val = token.lexeme;
-            } 
-            else if (token.kind == "identifier" && token.type == "name") {
-                
+            }
+            else if (token.type == TokenType::Identifier)
+            {
                 string tmp = "t" + std::to_string(ctx.tempId++);
                 ctx.ir << "  %" << tmp << " = load i32, i32* %" << token.lexeme << "\n";
                 val = "%" + tmp;
-            } 
-            else 
+            }
+            else
             {
                 return "";
             }
 
-            if (i == 0) 
+            if (i == 0)
             {
                 acc = val;
-            } 
-            else 
+            }
+            else
             {
                 string tmpAdd = "t" + std::to_string(ctx.tempId++);
                 ctx.ir << "  %" << tmpAdd << " = add i32 " << acc << ", " << val << "\n";
                 acc = "%" + tmpAdd;
             }
-        } else 
+        }
+        else if (token.type != TokenType::Add)
         {
-            if (token.lexeme != "+" || token.kind != "operator")
-                return "";
+            return "";
         }
     }
     return acc;
 }
 
+int fail(int code, const string &message)
+{
+    std::cerr << message << std::endl;
+    return code;
+}
+
+int expectNewline(const string &name, size_t &idx, const std::vector<Token> &tokens)
+{
+    if (idx < tokens.size())
+    {
+        if (tokens[idx].type != TokenType::Newline)
+            return fail(10, "Error: expected newline after declaration of " + name);
+        ++idx;
+    }
+    return 0;
+}
+
+int declare(const Token &nameTok, bool isMutable, IRContext &ctx)
+{
+    if (ctx.vars.count(nameTok.lexeme))
+        return fail(3, "Error: variable " + nameTok.lexeme + " is already declared");
+    ctx.ir << "  %" << nameTok.lexeme << " = alloca i32\n";
+    ctx.vars[nameTok.lexeme] = isMutable;
+    return 0;
+}
+
+std::vector<Token> collectExpr(size_t &idx, const std::vector<Token> &tokens)
+{
+    std::vector<Token> expr;
+    while (idx < tokens.size() && tokens[idx].type != TokenType::Newline)
+        expr.push_back(tokens[idx++]);
+    if (idx < tokens.size() && tokens[idx].type == TokenType::Newline) ++idx;
+    return expr;
+}
+
 int main(int argc, char **argv)
 {
-    if (argc < 2) 
+    if (argc < 2)
     {
         std::cerr << "Usage: compiler <source> <output>" << std::endl;
         return 1;
     }
 
     std::ifstream fin(argv[1]);
-    if (!fin) 
+    if (!fin)
     {
         std::cerr << "Cannot open file\n";
         return 1;
@@ -214,12 +247,8 @@ int main(int argc, char **argv)
     string source = buffer.str();
     fin.close();
 
-    ctx.vars.clear();
-    ctx.tempId = 0;
-    ctx.ir.str("");
-    ctx.ir.clear();
-
-    lexSource(source);
+    auto tokens = lexSource(source);
+    IRContext ctx;
 
     ctx.ir << "declare i32 @printf(i8*, ...)\n\n";
     ctx.ir << "@fmt = private constant [29 x i8] c\"Program exit with result %d\\0A\\00\"\n\n";
@@ -228,279 +257,167 @@ int main(int argc, char **argv)
     size_t idx = 0;
     bool sawReturn = false;
 
-    while (true) 
+    while (true)
     {
+        while (idx < tokens.size() && tokens[idx].type == TokenType::Newline) ++idx;
         if (idx >= tokens.size()) break;
-
-        if (tokens[idx].kind == "newline")
-        {
-            ++idx;
-            continue;
-        }
 
         const Token &token = tokens[idx];
 
-        if (token.lexeme == "var" && token.kind == "keyword" && token.type == "declaration") 
+        switch (token.type)
         {
-            if (sawReturn)
+            case TokenType::Var:
             {
-                std::cerr << "Error: code after return statement" << std::endl;
-                return 3;
-            }
-            ++idx;
+                if (sawReturn) return fail(3, "Error: code after return statement");
+                ++idx;
+                if (idx >= tokens.size() || tokens[idx].type != TokenType::Identifier)
+                    return fail(2, "Error: expected identifier after 'var'");
 
-            if (idx >= tokens.size() || tokens[idx].kind != "identifier")
-            {
-                std::cerr << "Error: expected identifier after 'var'" << std::endl;
-                return 2;
-            }
-            const Token &nameTok = tokens[idx];
+                const Token &nameTok = tokens[idx++];
+                bool isMutable = false;
 
-            if (ctx.vars.count(nameTok.lexeme))
-            {
-                std::cerr << "Error: variable " << nameTok.lexeme << " is already declared" << std::endl;
-                return 3;
-            }
-            ctx.ir << "  %" << nameTok.lexeme << " = alloca i32\n";
-            ctx.vars[nameTok.lexeme] = nameTok.lexeme;
-            ++idx;
-
-            bool sawType = false;
-            while (idx < tokens.size() && tokens[idx].kind == "keyword" && (tokens[idx].type == "specifier" || tokens[idx].type == "typename"))
-            {
-                if (tokens[idx].type == "typename")
+                bool sawType = false;
+                while (idx < tokens.size())
                 {
-                    sawType = true;
+                    auto t = tokens[idx].type;
+                    if (t == TokenType::I32)
+                    {
+                        sawType = true;
+                        ++idx;
+                    }
+                    else if (t == TokenType::Mut)
+                    {
+                        isMutable = true;
+                        ++idx;
+                    }
+                    else break;
                 }
-                ++idx;
-            }
-            if (!sawType)
-            {
-                std::cerr << "Error: missing typename for variable " << nameTok.lexeme << std::endl;
-                return 15;
+                if (!sawType)
+                    return fail(15, "Error: missing typename for variable " + nameTok.lexeme);
+
+                if (int code = declare(nameTok, isMutable, ctx)) return code;
+
+                if (int code = expectNewline(nameTok.lexeme, idx, tokens)) return code;
+                continue;
             }
 
-            if (idx < tokens.size())
+            case TokenType::I32:
             {
-                if (tokens[idx].kind != "newline")
+                if (sawReturn) return fail(3, "Error: code after return statement");
+                ++idx;
+                bool isMutable = false;
+                while (idx < tokens.size() && tokens[idx].type == TokenType::Mut)
                 {
-                    std::cerr << "Error: expected newline after declaration of " << nameTok.lexeme << std::endl;
-                    return 10;
-                }
-                ++idx;
-            }
-            continue;
-        }
-
-        if (token.kind == "keyword" && token.type == "typename")
-        {
-            if (sawReturn)
-            {
-                std::cerr << "Error: code after return statement" << std::endl;
-                return 3;
-            }
-
-            string typeName = token.lexeme;
-            if (typeName != "i32")
-            {
-                std::cerr << "Error: unsupported type " << typeName << std::endl;
-                return 11;
-            }
-            ++idx;
-
-            while (idx < tokens.size() && tokens[idx].kind == "keyword" && tokens[idx].type == "specifier")
-            {
-                ++idx;
-            }
-
-            if (idx >= tokens.size() || tokens[idx].kind != "identifier")
-            {
-                std::cerr << "Error: expected identifier after typename " << typeName << std::endl;
-                return 12;
-            }
-
-            const Token &nameTok = tokens[idx];
-            if (ctx.vars.count(nameTok.lexeme))
-            {
-                std::cerr << "Error: variable " << nameTok.lexeme << " is already declared" << std::endl;
-                return 3;
-            }
-
-            ctx.ir << "  %" << nameTok.lexeme << " = alloca i32\n";
-            ctx.vars[nameTok.lexeme] = nameTok.lexeme;
-            ++idx;
-
-            while (idx < tokens.size() && tokens[idx].kind == "keyword" && tokens[idx].type == "specifier")
-            {
-                ++idx;
-            }
-
-            bool hasInitializer = false;
-            if (idx < tokens.size() && tokens[idx].lexeme == "{" && tokens[idx].kind == "block")
-            {
-                hasInitializer = true;
-                ++idx;
-
-                std::vector<Token> initTokens;
-                while (idx < tokens.size() && !(tokens[idx].lexeme == "}" && tokens[idx].kind == "block"))
-                {
-                    initTokens.push_back(tokens[idx]);
+                    isMutable = true;
                     ++idx;
                 }
 
-                if (idx >= tokens.size())
+                if (idx >= tokens.size() || tokens[idx].type != TokenType::Identifier)
+                    return fail(12, "Error: expected identifier after typename i32");
+
+                const Token &nameTok = tokens[idx++];
+
+                while (idx < tokens.size() && tokens[idx].type == TokenType::Mut)
                 {
-                    std::cerr << "Error: missing closing '}' for initializer of " << nameTok.lexeme << std::endl;
-                    return 13;
+                    isMutable = true;
+                    ++idx;
                 }
 
-                ++idx; // skip '}'
-
-                if (initTokens.empty())
+                if (int code = declare(nameTok, isMutable, ctx)) return code;
+                bool hasInitializer = false;
+                if (idx < tokens.size() && tokens[idx].type == TokenType::BlockStart)
                 {
-                    std::cerr << "Error: empty initializer for variable " << nameTok.lexeme << std::endl;
-                    return 14;
+                    hasInitializer = true;
+                    ++idx;
+                    std::vector<Token> initTokens;
+                    while (idx < tokens.size() && tokens[idx].type != TokenType::BlockEnd)
+                        initTokens.push_back(tokens[idx++]);
+                    if (idx >= tokens.size())
+                        return fail(13, "Error: missing closing '}' for initializer of " + nameTok.lexeme);
+                    ++idx;
+                    if (initTokens.empty())
+                        return fail(14, "Error: empty initializer for variable " + nameTok.lexeme);
+
+                    string initVal = lowerExpr(initTokens, ctx);
+                    if (initVal.empty())
+                        return fail(8, "Error: invalid initializer for variable " + nameTok.lexeme);
+                    ctx.ir << "  store i32 " << initVal << ", i32* %" << nameTok.lexeme << "\n";
                 }
 
-                string initVal = lowerExpr(initTokens, ctx);
-                if (initVal.empty())
-                {
-                    std::cerr << "Error: invalid initializer for variable " << nameTok.lexeme << std::endl;
-                    return 8;
-                }
+                if (!hasInitializer)
+                    ctx.ir << "  store i32 0, i32* %" << nameTok.lexeme << "\n";
 
-                ctx.ir << "  store i32 " << initVal << ", i32* %" << nameTok.lexeme << "\n";
+                if (int code = expectNewline(nameTok.lexeme, idx, tokens)) return code;
+                continue;
             }
 
-            if (!hasInitializer)
+            case TokenType::Return:
             {
-                ctx.ir << "  store i32 0, i32* %" << nameTok.lexeme << "\n";
-            }
-
-            if (idx < tokens.size())
-            {
-                if (tokens[idx].kind != "newline")
-                {
-                    std::cerr << "Error: expected newline after declaration of " << nameTok.lexeme << std::endl;
-                    return 10;
-                }
+                if (sawReturn) return fail(5, "Error: code after return statement");
+                sawReturn = true;
                 ++idx;
+                auto exprTokens = collectExpr(idx, tokens);
+                if (exprTokens.empty())
+                    return fail(6, "Error: expected expression after 'return'");
+
+                string retVal = lowerExpr(exprTokens, ctx);
+                if (retVal.empty())
+                    return fail(7, "Error: invalid return expression");
+
+                if (retVal[0] != '%')
+                {
+                    string tmp = "t" + std::to_string(ctx.tempId++);
+                    ctx.ir << "  %" << tmp << " = add i32 0, " << retVal << "\n";
+                    retVal = "%" + tmp;
+                }
+
+                ctx.ir << "  %fmtptr = getelementptr [29 x i8], [29 x i8]* @fmt, i32 0, i32 0\n";
+                ctx.ir << "  call i32 (i8*, ...) @printf(i8* %fmtptr, i32 " << retVal << ")\n";
+                ctx.ir << "  ret i32 " << retVal << "\n";
+
+                if (idx < tokens.size())
+                    return fail(3, "Error: code after return statement");
+                break;
             }
 
-            continue;
+            case TokenType::Identifier:
+            {
+                if (sawReturn) return fail(3, "Error: code after return statement");
+                auto it = ctx.vars.find(token.lexeme);
+                if (it == ctx.vars.end())
+                    return fail(4, "Error: undeclared variable " + token.lexeme);
+                if (!it->second)
+                    return fail(16, "Error: variable " + token.lexeme + " is immutable");
+
+                string varName = token.lexeme;
+                ++idx;
+                if (idx >= tokens.size() || tokens[idx].type != TokenType::Assign)
+                    return fail(5, "Error: expected '=' after identifier " + varName);
+                ++idx;
+
+                auto exprTokens = collectExpr(idx, tokens);
+                if (exprTokens.empty())
+                    return fail(6, "Error: expected expression after '='");
+
+                string val = lowerExpr(exprTokens, ctx);
+                if (val.empty())
+                    return fail(8, "Error: invalid expression in assignment to " + varName);
+
+                ctx.ir << "  store i32 " << val << ", i32* %" << varName << "\n";
+                continue;
+            }
+
+            default:
+                return fail(1, "Error: unexpected token " + token.lexeme);
         }
 
-        if (token.lexeme == "return" && token.kind == "keyword" && token.type == "control") 
-        {
-            if (sawReturn)
-            {
-                std::cerr << "Error: code after return statement" << std::endl;
-                return 5;
-            }
-            sawReturn = true;
-            ++idx;
-
-            std::vector<Token> exprTokens;
-            while (idx < tokens.size() && tokens[idx].kind != "newline") 
-            {
-                exprTokens.push_back(tokens[idx]);
-                ++idx;
-            }
-            if (idx < tokens.size() && tokens[idx].kind == "newline")
-            {
-                ++idx;
-            }
-
-            if (exprTokens.empty())
-            {
-                std::cerr << "Error: expected expression after 'return'" << std::endl;
-                return 6;
-            }
-
-            string retVal = lowerExpr(exprTokens, ctx);
-            string retReg = retVal;
-
-            if (retReg.empty())
-            {
-                std::cerr << "Error: invalid return expression" << std::endl;
-                return 7;
-            }
-
-            if (retReg[0] != '%') 
-            {
-                string tmp = "t" + std::to_string(ctx.tempId++);
-                ctx.ir << "  %" << tmp << " = add i32 0, " << retReg << "\n";
-                retReg = "%" + tmp;
-            }
-
-            ctx.ir << "  %fmtptr = getelementptr [29 x i8], [29 x i8]* @fmt, i32 0, i32 0\n";
-            ctx.ir << "  call i32 (i8*, ...) @printf(i8* %fmtptr, i32 " << retReg << ")\n";
-            ctx.ir << "  ret i32 " << retReg << "\n";
-
-            if (idx < tokens.size())
-            {
-                std::cerr << "Error: code after return statement" << std::endl;
-                return 3;
-            }
-            break;
-        }
-
-        if (token.kind == "identifier" && token.type == "name") 
-        {
-            if (sawReturn)
-            {
-                std::cerr << "Error: code after return statement\n";
-                return 3;
-            }
-            if (!ctx.vars.count(token.lexeme))
-            {
-                std::cerr << "Error: undeclared variable " << token.lexeme << std::endl;
-                return 4;
-            }
-
-            string varName = token.lexeme;
-            ++idx;
-            if (idx >= tokens.size() || tokens[idx].lexeme != "=")
-            {
-                std::cerr << "Error: expected '=' after identifier " << varName << std::endl;
-                return 5;
-            }
-            ++idx;
-
-            std::vector<Token> exprTokens;
-            while (idx < tokens.size() && tokens[idx].kind != "newline") 
-            {
-                exprTokens.push_back(tokens[idx]);
-                ++idx;
-            }
-            if (idx < tokens.size() && tokens[idx].kind == "newline")
-            {
-                ++idx;
-            }
-            if (exprTokens.empty())
-            {
-                std::cerr << "Error: expected expression after '='" << std::endl;
-                return 6;
-            }
-
-            string val = lowerExpr(exprTokens, ctx);
-            if (val.empty())
-            {
-                std::cerr << "Error: invalid expression in assignment to " << varName << std::endl;
-                return 8;
-            }
-            ctx.ir << "  store i32 " << val << ", i32* %" << varName << "\n";
-            continue;
-        }
-
-        std::cerr << "Error: unexpected token " << token.lexeme << std::endl;
-        return 1;
+        break;
     }
 
     ctx.ir << "}\n";
     string filename;
 
-    if (argc >= 3) 
+    if (argc >= 3)
     {
         filename = argv[2];
     }
@@ -511,7 +428,7 @@ int main(int argc, char **argv)
         if (dot != string::npos) filename = filename.substr(0, dot);
         filename += ".ll";
     }
-    
+
     std::ofstream fout(filename);
     fout << ctx.ir.str();
     fout.close();
