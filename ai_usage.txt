@@ -231,3 +231,62 @@ To fix this, add a check after calling `lowerExpr` in the assignment handling co
 
 // ...existing code...
 ```
+
+Tabatskyi: ./compiler input.txt output.ll
+Error: unexpected token i32
+
+GitHub Copilot: Updated declaration handling to skip optional specifiers and the trailing newline, preventing `i32` from being treated as unexpected.
+
+````cpp
+// ...existing code...
+            ctx.ir << "  %" << nameTok.lexeme << " = alloca i32\n";
+            ctx.vars[nameTok.lexeme] = nameTok.lexeme;
+            ++idx;
+            while (idx < tokens.size() && tokens[idx].kind == "keyword" &&
+                   (tokens[idx].type == "specifier" || tokens[idx].type == "typename"))
+            {
+                ++idx;
+            }
+            if (idx < tokens.size() && tokens[idx].kind == "newline")
+            {
+                ++idx;
+            }
+            continue;
+// ...existing code...
+````
+
+Tabatskyi: specifiers now mandatory
+
+GitHub Copilot: Mandated at least one specifier after each declaration and tightened newline handling.
+
+````cpp
+// ...existing code...
+            ctx.ir << "  %" << nameTok.lexeme << " = alloca i32\n";
+            ctx.vars[nameTok.lexeme] = nameTok.lexeme;
+            ++idx;
+
+            bool sawSpecifier = false;
+            while (idx < tokens.size() && tokens[idx].kind == "keyword" &&
+                   (tokens[idx].type == "specifier" || tokens[idx].type == "typename"))
+            {
+                sawSpecifier = true;
+                ++idx;
+            }
+            if (!sawSpecifier)
+            {
+                std::cerr << "Error: missing specifier for variable " << nameTok.lexeme << std::endl;
+                return 9;
+            }
+
+            if (idx < tokens.size())
+            {
+                if (tokens[idx].kind != "newline")
+                {
+                    std::cerr << "Error: expected newline after declaration of " << nameTok.lexeme << std::endl;
+                    return 10;
+                }
+                ++idx;
+            }
+            continue;
+// ...existing code...
+````

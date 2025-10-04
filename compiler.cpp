@@ -61,6 +61,12 @@ void lexSource(const string &source)
                     ++i;
                     continue;
                 }
+                if (c == '\n')
+                {
+                    tokens.push_back(Token{"\n", "newline", "delimiter"});
+                    ++i;
+                    continue;
+                }
                 if (std::isspace(static_cast<unsigned char>(c))) 
                 {
                     ++i;
@@ -91,10 +97,6 @@ void lexSource(const string &source)
 
                 switch (c)
                 {
-                    case '\n':
-                        tokens.push_back(Token{"\n", "newline", "delimiter"});
-                        ++i;
-                        continue;
                     case '{':
                         tokens.push_back(Token{"{", "block", "start"});
                         ++i;
@@ -262,10 +264,134 @@ int main(int argc, char **argv)
             ctx.ir << "  %" << nameTok.lexeme << " = alloca i32\n";
             ctx.vars[nameTok.lexeme] = nameTok.lexeme;
             ++idx;
+
+            bool sawType = false;
+            while (idx < tokens.size() && tokens[idx].kind == "keyword" && (tokens[idx].type == "specifier" || tokens[idx].type == "typename"))
+            {
+                if (tokens[idx].type == "typename")
+                {
+                    sawType = true;
+                }
+                ++idx;
+            }
+            if (!sawType)
+            {
+                std::cerr << "Error: missing typename for variable " << nameTok.lexeme << std::endl;
+                return 15;
+            }
+
+            if (idx < tokens.size())
+            {
+                if (tokens[idx].kind != "newline")
+                {
+                    std::cerr << "Error: expected newline after declaration of " << nameTok.lexeme << std::endl;
+                    return 10;
+                }
+                ++idx;
+            }
             continue;
         }
 
-        if (token.lexeme == "return" && token.kind == "keyword" && token.type == "control") {
+        if (token.kind == "keyword" && token.type == "typename")
+        {
+            if (sawReturn)
+            {
+                std::cerr << "Error: code after return statement" << std::endl;
+                return 3;
+            }
+
+            string typeName = token.lexeme;
+            if (typeName != "i32")
+            {
+                std::cerr << "Error: unsupported type " << typeName << std::endl;
+                return 11;
+            }
+            ++idx;
+
+            while (idx < tokens.size() && tokens[idx].kind == "keyword" && tokens[idx].type == "specifier")
+            {
+                ++idx;
+            }
+
+            if (idx >= tokens.size() || tokens[idx].kind != "identifier")
+            {
+                std::cerr << "Error: expected identifier after typename " << typeName << std::endl;
+                return 12;
+            }
+
+            const Token &nameTok = tokens[idx];
+            if (ctx.vars.count(nameTok.lexeme))
+            {
+                std::cerr << "Error: variable " << nameTok.lexeme << " is already declared" << std::endl;
+                return 3;
+            }
+
+            ctx.ir << "  %" << nameTok.lexeme << " = alloca i32\n";
+            ctx.vars[nameTok.lexeme] = nameTok.lexeme;
+            ++idx;
+
+            while (idx < tokens.size() && tokens[idx].kind == "keyword" && tokens[idx].type == "specifier")
+            {
+                ++idx;
+            }
+
+            bool hasInitializer = false;
+            if (idx < tokens.size() && tokens[idx].lexeme == "{" && tokens[idx].kind == "block")
+            {
+                hasInitializer = true;
+                ++idx;
+
+                std::vector<Token> initTokens;
+                while (idx < tokens.size() && !(tokens[idx].lexeme == "}" && tokens[idx].kind == "block"))
+                {
+                    initTokens.push_back(tokens[idx]);
+                    ++idx;
+                }
+
+                if (idx >= tokens.size())
+                {
+                    std::cerr << "Error: missing closing '}' for initializer of " << nameTok.lexeme << std::endl;
+                    return 13;
+                }
+
+                ++idx; // skip '}'
+
+                if (initTokens.empty())
+                {
+                    std::cerr << "Error: empty initializer for variable " << nameTok.lexeme << std::endl;
+                    return 14;
+                }
+
+                string initVal = lowerExpr(initTokens, ctx);
+                if (initVal.empty())
+                {
+                    std::cerr << "Error: invalid initializer for variable " << nameTok.lexeme << std::endl;
+                    return 8;
+                }
+
+                ctx.ir << "  store i32 " << initVal << ", i32* %" << nameTok.lexeme << "\n";
+            }
+
+            if (!hasInitializer)
+            {
+                ctx.ir << "  store i32 0, i32* %" << nameTok.lexeme << "\n";
+            }
+
+            if (idx < tokens.size())
+            {
+                if (tokens[idx].kind != "newline")
+                {
+                    std::cerr << "Error: expected newline after declaration of " << nameTok.lexeme << std::endl;
+                    return 10;
+                }
+                ++idx;
+            }
+
+            continue;
+        }
+
+        if (token.lexeme == "return" && token.kind == "keyword" && token.type == "control") 
+        {
             if (sawReturn)
             {
                 std::cerr << "Error: code after return statement" << std::endl;
