@@ -1,4 +1,5 @@
 #include "Token.hpp"
+#include "SyntaxParser.hpp"
 
 #include <iostream>
 #include <fstream>
@@ -129,82 +130,168 @@ std::vector<Token> lexSource(const string &source)
     return out;
 }
 
-string lowerExpr(const std::vector<Token> &exprTokens, IRContext &ctx)
-{
-    string acc;
-    for (size_t i = 0; i < exprTokens.size(); ++i)
-    {
-        const Token &token = exprTokens[i];
-        if ((i & 1) == 0)
-        {
-            string val;
-            if (token.type == TokenType::Number)
-            {
-                val = token.lexeme;
-            }
-            else if (token.type == TokenType::Identifier)
-            {
-                string tmp = "t" + std::to_string(ctx.tempId++);
-                ctx.ir << "  %" << tmp << " = load i32, i32* %" << token.lexeme << "\n";
-                val = "%" + tmp;
-            }
-            else
-            {
-                return "";
-            }
-
-            if (i == 0)
-            {
-                acc = val;
-            }
-            else
-            {
-                string tmpAdd = "t" + std::to_string(ctx.tempId++);
-                ctx.ir << "  %" << tmpAdd << " = add i32 " << acc << ", " << val << "\n";
-                acc = "%" + tmpAdd;
-            }
-        }
-        else if (token.type != TokenType::Add)
-        {
-            return "";
-        }
-    }
-    return acc;
-}
-
 int fail(int code, const string &message)
 {
     std::cerr << message << std::endl;
     return code;
 }
 
-int expectNewline(const string &name, size_t &idx, const std::vector<Token> &tokens)
+static string lowerExpr(const ExprNode &expr, IRContext &ctx);
+static string lowerFactor(const FactorNode &factor, IRContext &ctx);
+static int lowerDecl(const DeclNode &decl, IRContext &ctx);
+static int lowerAssign(const AssignNode &assign, IRContext &ctx);
+static int lowerReturn(const ReturnNode &ret, IRContext &ctx);
+static int lowerProgram(const ProgramNode &program, IRContext &ctx);
+
+static string lowerFactor(const FactorNode &factor, IRContext &ctx)
 {
-    if (idx < tokens.size())
+    if (const auto *id = dynamic_cast<const IDNode *>(&factor))
     {
-        if (tokens[idx].type != TokenType::Newline)
-            return fail(10, "Error: expected newline after declaration of " + name);
-        ++idx;
+        auto it = ctx.vars.find(id->name());
+        if (it == ctx.vars.end())
+        {
+            fail(4, "Error: undeclared variable " + id->name());
+            return "";
+        }
+
+        string tmp = "t" + std::to_string(ctx.tempId++);
+        ctx.ir << "  %" << tmp << " = load i32, i32* %" << id->name() << "\n";
+        return "%" + tmp;
     }
+
+    if (const auto *number = dynamic_cast<const NumberNode *>(&factor))
+    {
+        return std::to_string(number->value());
+    }
+
+    fail(8, "Error: unsupported factor in expression");
+    return "";
+}
+
+static string lowerExpr(const ExprNode &expr, IRContext &ctx)
+{
+    if (const auto *factor = dynamic_cast<const FactorNode *>(&expr))
+        return lowerFactor(*factor, ctx);
+
+    if (const auto *bin = dynamic_cast<const BinaryOpNode *>(&expr))
+    {
+        string leftVal = lowerExpr(*bin->left(), ctx);
+        if (leftVal.empty())
+            return "";
+
+        string rightVal = lowerExpr(*bin->right(), ctx);
+        if (rightVal.empty())
+            return "";
+
+        const char *opInstr = "add";
+        switch (bin->op())
+        {
+            case BinaryOpNode::Operator::Add: opInstr = "add"; break;
+            case BinaryOpNode::Operator::Sub: opInstr = "sub"; break;
+            case BinaryOpNode::Operator::Mul: opInstr = "mul"; break;
+        }
+
+        string tmp = "t" + std::to_string(ctx.tempId++);
+        ctx.ir << "  %" << tmp << " = " << opInstr << " i32 " << leftVal << ", " << rightVal << "\n";
+        return "%" + tmp;
+    }
+
+    fail(8, "Error: unsupported expression node");
+    return "";
+}
+
+static int lowerDecl(const DeclNode &decl, IRContext &ctx)
+{
+    const std::string &name = decl.identifier();
+    if (ctx.vars.count(name))
+        return fail(3, "Error: variable " + name + " is already declared");
+
+    ctx.ir << "  %" << name << " = alloca i32\n";
+    ctx.vars[name] = decl.isMutable();
+
+    if (decl.initializer())
+    {
+        string initVal = lowerExpr(*decl.initializer(), ctx);
+        if (initVal.empty())
+            return fail(8, "Error: invalid initializer for variable " + name);
+        ctx.ir << "  store i32 " << initVal << ", i32* %" << name << "\n";
+    }
+    else
+    {
+        ctx.ir << "  store i32 0, i32* %" << name << "\n";
+    }
+
     return 0;
 }
 
-int declare(const Token &nameTok, bool isMutable, IRContext &ctx)
+static int lowerAssign(const AssignNode &assign, IRContext &ctx)
 {
-    if (ctx.vars.count(nameTok.lexeme))
-        return fail(3, "Error: variable " + nameTok.lexeme + " is already declared");
-    ctx.ir << "  %" << nameTok.lexeme << " = alloca i32\n";
-    ctx.vars[nameTok.lexeme] = isMutable;
+    const std::string &name = assign.identifier();
+    auto it = ctx.vars.find(name);
+    if (it == ctx.vars.end())
+        return fail(4, "Error: undeclared variable " + name);
+    if (!it->second)
+        return fail(16, "Error: variable " + name + " is immutable");
+
+    string value = lowerExpr(*assign.value(), ctx);
+    if (value.empty())
+        return fail(8, "Error: invalid expression in assignment to " + name);
+
+    ctx.ir << "  store i32 " << value << ", i32* %" << name << "\n";
     return 0;
 }
 
-std::vector<Token> collectExpr(size_t &idx, const std::vector<Token> &tokens)
+static int lowerReturn(const ReturnNode &ret, IRContext &ctx)
 {
-    std::vector<Token> expr;
-    while (idx < tokens.size() && tokens[idx].type != TokenType::Newline)
-        expr.push_back(tokens[idx++]);
-    if (idx < tokens.size() && tokens[idx].type == TokenType::Newline) ++idx;
-    return expr;
+    if (!ret.expr())
+        return fail(6, "Error: expected expression after 'return'");
+
+    string result = lowerExpr(*ret.expr(), ctx);
+    if (result.empty())
+        return fail(7, "Error: invalid return expression");
+
+    if (result.front() != '%')
+    {
+        string tmp = "t" + std::to_string(ctx.tempId++);
+        ctx.ir << "  %" << tmp << " = add i32 0, " << result << "\n";
+        result = "%" + tmp;
+    }
+
+    ctx.ir << "  %fmtptr = getelementptr [29 x i8], [29 x i8]* @fmt, i32 0, i32 0\n";
+    ctx.ir << "  call i32 (i8*, ...) @printf(i8* %fmtptr, i32 " << result << ")\n";
+    ctx.ir << "  ret i32 " << result << "\n";
+    return 0;
+}
+
+static int lowerProgram(const ProgramNode &program, IRContext &ctx)
+{
+    for (const auto &stmt : program.statements())
+    {
+        if (!stmt)
+            continue;
+
+        if (const auto *decl = dynamic_cast<const DeclNode *>(stmt.get()))
+        {
+            if (int code = lowerDecl(*decl, ctx))
+                return code;
+            continue;
+        }
+
+        if (const auto *assign = dynamic_cast<const AssignNode *>(stmt.get()))
+        {
+            if (int code = lowerAssign(*assign, ctx))
+                return code;
+            continue;
+        }
+
+        return fail(1, "Error: unsupported statement node encountered");
+    }
+
+    const ReturnNode *ret = program.returnStmt();
+    if (!ret)
+        return fail(5, "Error: missing return statement");
+
+    return lowerReturn(*ret, ctx);
 }
 
 int main(int argc, char **argv)
@@ -228,171 +315,32 @@ int main(int argc, char **argv)
     fin.close();
 
     auto tokens = lexSource(source);
+    SyntaxParser parser(tokens);
+    auto program = parser.parseProgram();
+
+    if (!program || parser.hasErrors())
+    {
+        const auto &errs = parser.errors();
+        if (errs.empty())
+        {
+            std::cerr << "Parse error: unable to build AST" << std::endl;
+        }
+        else
+        {
+            for (const auto &err : errs)
+                std::cerr << "Parse error: " << err << std::endl;
+        }
+        return 1;
+    }
+
     IRContext ctx;
 
     ctx.ir << "declare i32 @printf(i8*, ...)\n\n";
     ctx.ir << "@fmt = private constant [29 x i8] c\"Program exit with result %d\\0A\\00\"\n\n";
     ctx.ir << "define i32 @main() {\n";
 
-    size_t idx = 0;
-    bool sawReturn = false;
-
-    while (true)
-    {
-        while (idx < tokens.size() && tokens[idx].type == TokenType::Newline) ++idx;
-        if (idx >= tokens.size()) break;
-
-        const Token &token = tokens[idx];
-
-        switch (token.type)
-        {
-            case TokenType::Var:
-            {
-                if (sawReturn) return fail(3, "Error: code after return statement");
-                ++idx;
-                if (idx >= tokens.size() || tokens[idx].type != TokenType::Identifier)
-                    return fail(2, "Error: expected identifier after 'var'");
-
-                const Token &nameTok = tokens[idx++];
-                bool isMutable = false;
-
-                bool sawType = false;
-                while (idx < tokens.size())
-                {
-                    auto t = tokens[idx].type;
-                    if (t == TokenType::I32)
-                    {
-                        sawType = true;
-                        ++idx;
-                    }
-                    else if (t == TokenType::Mut)
-                    {
-                        isMutable = true;
-                        ++idx;
-                    }
-                    else break;
-                }
-                if (!sawType)
-                    return fail(15, "Error: missing typename for variable " + nameTok.lexeme);
-
-                if (int code = declare(nameTok, isMutable, ctx)) return code;
-
-                if (int code = expectNewline(nameTok.lexeme, idx, tokens)) return code;
-                continue;
-            }
-
-            case TokenType::I32:
-            {
-                if (sawReturn) return fail(3, "Error: code after return statement");
-                ++idx;
-                bool isMutable = false;
-                while (idx < tokens.size() && tokens[idx].type == TokenType::Mut)
-                {
-                    isMutable = true;
-                    ++idx;
-                }
-
-                if (idx >= tokens.size() || tokens[idx].type != TokenType::Identifier)
-                    return fail(12, "Error: expected identifier after typename i32");
-
-                const Token &nameTok = tokens[idx++];
-
-                while (idx < tokens.size() && tokens[idx].type == TokenType::Mut)
-                {
-                    isMutable = true;
-                    ++idx;
-                }
-
-                if (int code = declare(nameTok, isMutable, ctx)) return code;
-                bool hasInitializer = false;
-                if (idx < tokens.size() && tokens[idx].type == TokenType::BlockStart)
-                {
-                    hasInitializer = true;
-                    ++idx;
-                    std::vector<Token> initTokens;
-                    while (idx < tokens.size() && tokens[idx].type != TokenType::BlockEnd)
-                        initTokens.push_back(tokens[idx++]);
-                    if (idx >= tokens.size())
-                        return fail(13, "Error: missing closing '}' for initializer of " + nameTok.lexeme);
-                    ++idx;
-                    if (initTokens.empty())
-                        return fail(14, "Error: empty initializer for variable " + nameTok.lexeme);
-
-                    string initVal = lowerExpr(initTokens, ctx);
-                    if (initVal.empty())
-                        return fail(8, "Error: invalid initializer for variable " + nameTok.lexeme);
-                    ctx.ir << "  store i32 " << initVal << ", i32* %" << nameTok.lexeme << "\n";
-                }
-
-                if (!hasInitializer)
-                    ctx.ir << "  store i32 0, i32* %" << nameTok.lexeme << "\n";
-
-                if (int code = expectNewline(nameTok.lexeme, idx, tokens)) return code;
-                continue;
-            }
-
-            case TokenType::Return:
-            {
-                if (sawReturn) return fail(5, "Error: code after return statement");
-                sawReturn = true;
-                ++idx;
-                auto exprTokens = collectExpr(idx, tokens);
-                if (exprTokens.empty())
-                    return fail(6, "Error: expected expression after 'return'");
-
-                string retVal = lowerExpr(exprTokens, ctx);
-                if (retVal.empty())
-                    return fail(7, "Error: invalid return expression");
-
-                if (retVal[0] != '%')
-                {
-                    string tmp = "t" + std::to_string(ctx.tempId++);
-                    ctx.ir << "  %" << tmp << " = add i32 0, " << retVal << "\n";
-                    retVal = "%" + tmp;
-                }
-
-                ctx.ir << "  %fmtptr = getelementptr [29 x i8], [29 x i8]* @fmt, i32 0, i32 0\n";
-                ctx.ir << "  call i32 (i8*, ...) @printf(i8* %fmtptr, i32 " << retVal << ")\n";
-                ctx.ir << "  ret i32 " << retVal << "\n";
-
-                if (idx < tokens.size())
-                    return fail(3, "Error: code after return statement");
-                break;
-            }
-
-            case TokenType::Identifier:
-            {
-                if (sawReturn) return fail(3, "Error: code after return statement");
-                auto it = ctx.vars.find(token.lexeme);
-                if (it == ctx.vars.end())
-                    return fail(4, "Error: undeclared variable " + token.lexeme);
-                if (!it->second)
-                    return fail(16, "Error: variable " + token.lexeme + " is immutable");
-
-                string varName = token.lexeme;
-                ++idx;
-                if (idx >= tokens.size() || tokens[idx].type != TokenType::Assign)
-                    return fail(5, "Error: expected '=' after identifier " + varName);
-                ++idx;
-
-                auto exprTokens = collectExpr(idx, tokens);
-                if (exprTokens.empty())
-                    return fail(6, "Error: expected expression after '='");
-
-                string val = lowerExpr(exprTokens, ctx);
-                if (val.empty())
-                    return fail(8, "Error: invalid expression in assignment to " + varName);
-
-                ctx.ir << "  store i32 " << val << ", i32* %" << varName << "\n";
-                continue;
-            }
-
-            default:
-                return fail(1, "Error: unexpected token " + token.lexeme);
-        }
-
-        break;
-    }
+    if (int code = lowerProgram(*program, ctx))
+        return code;
 
     ctx.ir << "}\n";
     string filename;

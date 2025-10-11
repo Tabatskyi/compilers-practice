@@ -48,6 +48,7 @@ private:
     bool match(TokenType type);
     bool expect(TokenType type, const std::string &message);
 
+    void skipNewlines();
     std::unique_ptr<ExprNode> parseBinaryTail(std::unique_ptr<ExprNode> left);
 
     void addError(const std::string &message);
