@@ -1,20 +1,20 @@
 #include "SyntaxParser.hpp"
 
-SyntaxParser::SyntaxParser(TokenStream tokens): m_tokens(std::move(tokens)) {}
+SyntaxParser::SyntaxParser(std::vector<Token> tokens): m_tokens(std::move(tokens)) {}
 
-const Token *SyntaxParser::peek(std::size_t offset) const
+const Token* SyntaxParser::peek(std::size_t offset) const
 {
     std::size_t target = m_index + offset;
     if (target >= m_tokens.size())
         return nullptr;
-    return &m_tokens[target];
+    return& m_tokens[target];
 }
 
-const Token *SyntaxParser::eat()
+const Token* SyntaxParser::eat()
 {
     if (atEnd())
         return nullptr;
-    return &m_tokens[m_index++];
+    return& m_tokens[m_index++];
 }
 
 std::unique_ptr<ProgramNode> SyntaxParser::parseProgram()
@@ -25,7 +25,7 @@ std::unique_ptr<ProgramNode> SyntaxParser::parseProgram()
 
     while (!atEnd())
     {
-        const Token *token = peek();
+        const Token* token = peek();
         if (!token)
             break;
 
@@ -40,7 +40,7 @@ std::unique_ptr<ProgramNode> SyntaxParser::parseProgram()
         skipNewlines();
     }
 
-    const Token *retToken = peek();
+    const Token* retToken = peek();
     if (!retToken || retToken->type != TokenType::Return)
     {
         addError("Expected return statement at end of program");
@@ -62,7 +62,7 @@ std::unique_ptr<StmtNode> SyntaxParser::parseStmt()
 {
     skipNewlines();
 
-    const Token *token = peek();
+    const Token* token = peek();
     if (!token)
     {
         addError("Unexpected end of input while parsing statement");
@@ -107,7 +107,7 @@ std::unique_ptr<DeclNode> SyntaxParser::parseDecl()
     while (match(TokenType::Mut))
         isMutable = true;
 
-    const Token *identTok = peek();
+    const Token* identTok = peek();
     if (!identTok || identTok->type != TokenType::Identifier)
     {
         addError("Expected identifier after type specifier");
@@ -136,7 +136,7 @@ std::unique_ptr<DeclNode> SyntaxParser::parseDecl()
 
 std::unique_ptr<AssignNode> SyntaxParser::parseAssign()
 {
-    const Token *identTok = peek();
+    const Token* identTok = peek();
     if (!identTok || identTok->type != TokenType::Identifier)
     {
         addError("Expected identifier at start of assignment");
@@ -173,7 +173,7 @@ std::unique_ptr<ExprNode> SyntaxParser::parseExpr()
 
 std::unique_ptr<FactorNode> SyntaxParser::parseFactor()
 {
-    const Token *token = peek();
+    const Token* token = peek();
     if (!token)
     {
         addError("Unexpected end of input while parsing factor");
@@ -209,8 +209,8 @@ bool SyntaxParser::atEnd() const
 
 bool SyntaxParser::match(TokenType type)
 {
-    const Token *token = peek();
-    if (token && token->type == type)
+    const Token* token = peek();
+    if (token&& token->type == type)
     {
         ++m_index;
         return true;
@@ -218,7 +218,7 @@ bool SyntaxParser::match(TokenType type)
     return false;
 }
 
-bool SyntaxParser::expect(TokenType type, const std::string &message)
+bool SyntaxParser::expect(TokenType type, const std::string& message)
 {
     if (match(type))
         return true;
@@ -237,7 +237,7 @@ std::unique_ptr<ExprNode> SyntaxParser::parseBinaryTail(std::unique_ptr<ExprNode
     if (!left)
         return nullptr;
 
-    while (const Token *token = peek())
+    while (const Token* token = peek())
     {
         BinaryOpNode::Operator op;
         switch (token->type)
@@ -270,7 +270,7 @@ std::unique_ptr<ExprNode> SyntaxParser::parseBinaryTail(std::unique_ptr<ExprNode
     return left;
 }
 
-void SyntaxParser::addError(const std::string &message)
+void SyntaxParser::addError(const std::string& message)
 {
     m_errors.push_back(message);
 }

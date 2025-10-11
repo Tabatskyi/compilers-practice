@@ -26,5 +26,3 @@ struct Token
     std::string lexeme;
     TokenType type;
 };
-
-using TokenStream = std::vector<Token>;

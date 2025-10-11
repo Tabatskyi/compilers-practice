@@ -30,8 +30,8 @@ public:
 	ProgramNode(StmtList stmts, std::unique_ptr<ReturnNode> ret)
 		: m_statements(std::move(stmts)), m_return(std::move(ret)) {}
 
-	const StmtList &statements() const { return m_statements; }
-	const ReturnNode *returnStmt() const { return m_return.get(); }
+	const StmtList& statements() const { return m_statements; }
+	const ReturnNode* returnStmt() const { return m_return.get(); }
 
 	void visit() const override {}
 
@@ -67,7 +67,7 @@ class IDNode : public FactorNode
 public:
 	explicit IDNode(std::string name) : m_name(std::move(name)) {}
 
-	const std::string &name() const { return m_name; }
+	const std::string& name() const { return m_name; }
 
 	void visit() const override {}
 
@@ -108,8 +108,8 @@ public:
 		  m_right(std::move(right)) {}
 
 	Operator op() const { return m_operator; }
-	const ExprNode *left() const { return m_left.get(); }
-	const ExprNode *right() const { return m_right.get(); }
+	const ExprNode* left() const { return m_left.get(); }
+	const ExprNode* right() const { return m_right.get(); }
 
 	void visit() const override {}
 
@@ -123,17 +123,13 @@ private:
 class DeclNode : public StmtNode
 {
 public:
-	DeclNode(std::string identifier,
-			 bool isMutable,
-			 std::unique_ptr<ExprNode> initializer)
-		: m_identifier(std::move(identifier)),
-		  m_isMutable(isMutable),
-		  m_initializer(std::move(initializer)) {}
+	DeclNode(std::string identifier, bool isMutable, std::unique_ptr<ExprNode> initializer)
+		    : m_identifier(std::move(identifier)), m_isMutable(isMutable), m_initializer(std::move(initializer)) {}
 
-	const std::string &identifier() const { return m_identifier; }
+	const std::string& identifier() const { return m_identifier; }
 	bool isMutable() const { return m_isMutable; }
 	bool hasInitializer() const { return static_cast<bool>(m_initializer); }
-	const ExprNode *initializer() const { return m_initializer.get(); }
+	const ExprNode* initializer() const { return m_initializer.get(); }
 
 	void visit() const override {}
 
@@ -150,8 +146,8 @@ public:
 	AssignNode(std::string identifier, std::unique_ptr<ExprNode> value)
 		: m_identifier(std::move(identifier)), m_value(std::move(value)) {}
 
-	const std::string &identifier() const { return m_identifier; }
-	const ExprNode *value() const { return m_value.get(); }
+	const std::string& identifier() const { return m_identifier; }
+	const ExprNode* value() const { return m_value.get(); }
 
 	void visit() const override {}
 
@@ -167,7 +163,7 @@ public:
 	explicit ReturnNode(std::unique_ptr<ExprNode> expr)
 		: m_expr(std::move(expr)) {}
 
-	const ExprNode *expr() const { return m_expr.get(); }
+	const ExprNode* expr() const { return m_expr.get(); }
 
 	void visit() const override {}
 

@@ -26,13 +26,13 @@ static const std::unordered_map<string, TokenType> keywordMap =
     {"i32", TokenType::I32}
 };
 
-TokenType classifyIdentifier(const string &ident)
+TokenType classifyIdentifier(const string& ident)
 {
     auto it = keywordMap.find(ident);
     return (it != keywordMap.end()) ? it->second : TokenType::Identifier;
 }
 
-std::vector<Token> lexSource(const string &source)
+std::vector<Token> lexSource(const string& source)
 {
     std::vector<Token> out;
     enum class State { Start, Identifier, Number };
@@ -64,10 +64,10 @@ std::vector<Token> lexSource(const string &source)
                     ++i;
                     continue;
                 }
-                if (c == '/' && i + 1 < source.size() && source[i + 1] == '/')
+                if (c == '/'&& i + 1 < source.size()&& source[i + 1] == '/')
                 {
                     i += 2;
-                    while (i < source.size() && source[i] != '\n') ++i;
+                    while (i < source.size()&& source[i] != '\n') ++i;
                     continue;
                 }
                 if (std::isalpha(static_cast<unsigned char>(c)) || c == '_')
@@ -101,7 +101,7 @@ std::vector<Token> lexSource(const string &source)
                 continue;
 
             case State::Identifier:
-                if (!atEnd && (std::isalnum(static_cast<unsigned char>(c)) || c == '_'))
+                if (!atEnd&& (std::isalnum(static_cast<unsigned char>(c)) || c == '_'))
                 {
                     buffer.push_back(c);
                     ++i;
@@ -113,7 +113,7 @@ std::vector<Token> lexSource(const string &source)
                 continue;
 
             case State::Number:
-                if (!atEnd && std::isdigit(static_cast<unsigned char>(c)))
+                if (!atEnd&& std::isdigit(static_cast<unsigned char>(c)))
                 {
                     buffer.push_back(c);
                     ++i;
@@ -130,22 +130,15 @@ std::vector<Token> lexSource(const string &source)
     return out;
 }
 
-int fail(int code, const string &message)
+int fail(int code, const string& message)
 {
     std::cerr << message << std::endl;
     return code;
 }
 
-static string lowerExpr(const ExprNode &expr, IRContext &ctx);
-static string lowerFactor(const FactorNode &factor, IRContext &ctx);
-static int lowerDecl(const DeclNode &decl, IRContext &ctx);
-static int lowerAssign(const AssignNode &assign, IRContext &ctx);
-static int lowerReturn(const ReturnNode &ret, IRContext &ctx);
-static int lowerProgram(const ProgramNode &program, IRContext &ctx);
-
-static string lowerFactor(const FactorNode &factor, IRContext &ctx)
+static string parseFactor(const FactorNode& factor, IRContext& ctx)
 {
-    if (const auto *id = dynamic_cast<const IDNode *>(&factor))
+    if (const auto* id = dynamic_cast<const IDNode*>(&factor))
     {
         auto it = ctx.vars.find(id->name());
         if (it == ctx.vars.end())
@@ -159,7 +152,7 @@ static string lowerFactor(const FactorNode &factor, IRContext &ctx)
         return "%" + tmp;
     }
 
-    if (const auto *number = dynamic_cast<const NumberNode *>(&factor))
+    if (const auto* number = dynamic_cast<const NumberNode*>(&factor))
     {
         return std::to_string(number->value());
     }
@@ -168,22 +161,22 @@ static string lowerFactor(const FactorNode &factor, IRContext &ctx)
     return "";
 }
 
-static string lowerExpr(const ExprNode &expr, IRContext &ctx)
+static string parseExpr(const ExprNode& expr, IRContext& ctx)
 {
-    if (const auto *factor = dynamic_cast<const FactorNode *>(&expr))
-        return lowerFactor(*factor, ctx);
+    if (const auto* factor = dynamic_cast<const FactorNode*>(&expr))
+        return parseFactor(*factor, ctx);
 
-    if (const auto *bin = dynamic_cast<const BinaryOpNode *>(&expr))
+    if (const auto* bin = dynamic_cast<const BinaryOpNode*>(&expr))
     {
-        string leftVal = lowerExpr(*bin->left(), ctx);
+        string leftVal = parseExpr(*bin->left(), ctx);
         if (leftVal.empty())
             return "";
 
-        string rightVal = lowerExpr(*bin->right(), ctx);
+        string rightVal = parseExpr(*bin->right(), ctx);
         if (rightVal.empty())
             return "";
 
-        const char *opInstr = "add";
+        const char* opInstr = "add";
         switch (bin->op())
         {
             case BinaryOpNode::Operator::Add: opInstr = "add"; break;
@@ -200,9 +193,9 @@ static string lowerExpr(const ExprNode &expr, IRContext &ctx)
     return "";
 }
 
-static int lowerDecl(const DeclNode &decl, IRContext &ctx)
+static int parseDecl(const DeclNode& decl, IRContext& ctx)
 {
-    const std::string &name = decl.identifier();
+    const std::string& name = decl.identifier();
     if (ctx.vars.count(name))
         return fail(3, "Error: variable " + name + " is already declared");
 
@@ -211,7 +204,7 @@ static int lowerDecl(const DeclNode &decl, IRContext &ctx)
 
     if (decl.initializer())
     {
-        string initVal = lowerExpr(*decl.initializer(), ctx);
+        string initVal = parseExpr(*decl.initializer(), ctx);
         if (initVal.empty())
             return fail(8, "Error: invalid initializer for variable " + name);
         ctx.ir << "  store i32 " << initVal << ", i32* %" << name << "\n";
@@ -224,16 +217,16 @@ static int lowerDecl(const DeclNode &decl, IRContext &ctx)
     return 0;
 }
 
-static int lowerAssign(const AssignNode &assign, IRContext &ctx)
+static int parseAssign(const AssignNode& assign, IRContext& ctx)
 {
-    const std::string &name = assign.identifier();
+    const std::string& name = assign.identifier();
     auto it = ctx.vars.find(name);
     if (it == ctx.vars.end())
         return fail(4, "Error: undeclared variable " + name);
     if (!it->second)
         return fail(16, "Error: variable " + name + " is immutable");
 
-    string value = lowerExpr(*assign.value(), ctx);
+    string value = parseExpr(*assign.value(), ctx);
     if (value.empty())
         return fail(8, "Error: invalid expression in assignment to " + name);
 
@@ -241,12 +234,12 @@ static int lowerAssign(const AssignNode &assign, IRContext &ctx)
     return 0;
 }
 
-static int lowerReturn(const ReturnNode &ret, IRContext &ctx)
+static int parseReturn(const ReturnNode& ret, IRContext& ctx)
 {
     if (!ret.expr())
         return fail(6, "Error: expected expression after 'return'");
 
-    string result = lowerExpr(*ret.expr(), ctx);
+    string result = parseExpr(*ret.expr(), ctx);
     if (result.empty())
         return fail(7, "Error: invalid return expression");
 
@@ -263,23 +256,23 @@ static int lowerReturn(const ReturnNode &ret, IRContext &ctx)
     return 0;
 }
 
-static int lowerProgram(const ProgramNode &program, IRContext &ctx)
+static int parseProgram(const ProgramNode& program, IRContext& ctx)
 {
-    for (const auto &stmt : program.statements())
+    for (const auto& stmt : program.statements())
     {
         if (!stmt)
             continue;
 
-        if (const auto *decl = dynamic_cast<const DeclNode *>(stmt.get()))
+        if (const auto* decl = dynamic_cast<const DeclNode*>(stmt.get()))
         {
-            if (int code = lowerDecl(*decl, ctx))
+            if (int code = parseDecl(*decl, ctx))
                 return code;
             continue;
         }
 
-        if (const auto *assign = dynamic_cast<const AssignNode *>(stmt.get()))
+        if (const auto* assign = dynamic_cast<const AssignNode*>(stmt.get()))
         {
-            if (int code = lowerAssign(*assign, ctx))
+            if (int code = parseAssign(*assign, ctx))
                 return code;
             continue;
         }
@@ -287,14 +280,14 @@ static int lowerProgram(const ProgramNode &program, IRContext &ctx)
         return fail(1, "Error: unsupported statement node encountered");
     }
 
-    const ReturnNode *ret = program.returnStmt();
+    const ReturnNode* ret = program.returnStmt();
     if (!ret)
         return fail(5, "Error: missing return statement");
 
-    return lowerReturn(*ret, ctx);
+    return parseReturn(*ret, ctx);
 }
 
-int main(int argc, char **argv)
+int main(int argc, char** argv)
 {
     if (argc < 2)
     {
@@ -320,14 +313,14 @@ int main(int argc, char **argv)
 
     if (!program || parser.hasErrors())
     {
-        const auto &errs = parser.errors();
+        const auto& errs = parser.errors();
         if (errs.empty())
         {
             std::cerr << "Parse error: unable to build AST" << std::endl;
         }
         else
         {
-            for (const auto &err : errs)
+            for (const auto& err : errs)
                 std::cerr << "Parse error: " << err << std::endl;
         }
         return 1;
@@ -339,7 +332,7 @@ int main(int argc, char **argv)
     ctx.ir << "@fmt = private constant [29 x i8] c\"Program exit with result %d\\0A\\00\"\n\n";
     ctx.ir << "define i32 @main() {\n";
 
-    if (int code = lowerProgram(*program, ctx))
+    if (int code = parseProgram(*program, ctx))
         return code;
 
     ctx.ir << "}\n";
