@@ -1,0 +1,58 @@
+#pragma once
+
+#include "ASTNode.hpp"
+#include "Token.hpp"
+
+#include <cstddef>
+#include <memory>
+#include <string>
+#include <vector>
+
+/// Syntax parser that consumes a token stream and produces an AST.
+class SyntaxParser
+{
+public:
+    explicit SyntaxParser(TokenStream tokens);
+
+    /// Peek at the token `offset` positions ahead. Returns nullptr when out of bounds.
+    const Token *peek(std::size_t offset = 0) const;
+
+    /// Consume and return the current token. Returns nullptr if already at end.
+    const Token *eat();
+
+    /// Parse the whole program according to the grammar.
+    std::unique_ptr<ProgramNode> parseProgram();
+
+    /// Parse an individual statement (declaration or assignment).
+    std::unique_ptr<StmtNode> parseStmt();
+
+    /// Parse a return statement.
+    std::unique_ptr<ReturnNode> parseReturn();
+
+    /// Parse either a declaration or assignment depending on current token.
+    std::unique_ptr<DeclNode> parseDecl();
+    std::unique_ptr<AssignNode> parseAssign();
+
+    /// Parse expressions and sub-components.
+    std::unique_ptr<ExprNode> parseExpr();
+    std::unique_ptr<FactorNode> parseFactor();
+
+    /// Whether parsing produced any errors.
+    bool hasErrors() const { return !m_errors.empty(); }
+
+    /// Retrieve the list of diagnostic messages.
+    const std::vector<std::string> &errors() const { return m_errors; }
+
+private:
+    bool atEnd() const;
+    bool match(TokenType type);
+    bool expect(TokenType type, const std::string &message);
+
+    std::unique_ptr<ExprNode> parseBinaryTail(std::unique_ptr<ExprNode> left);
+
+    void addError(const std::string &message);
+
+    TokenStream m_tokens;
+    std::size_t m_index = 0;
+    std::vector<std::string> m_errors;
+};

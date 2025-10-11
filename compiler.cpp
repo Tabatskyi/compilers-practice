@@ -1,3 +1,5 @@
+#include "Token.hpp"
+
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -7,29 +9,6 @@
 #include <sstream>
 
 using std::string;
-
-enum class TokenType
-{
-    Newline,
-    Identifier,
-    Number,
-    Var,
-    Mut,
-    Return,
-    I32,
-    BlockStart,
-    BlockEnd,
-    Assign,
-    Add,
-    Sub,
-    Mul
-};
-
-struct Token
-{
-    string lexeme;
-    TokenType type;
-};
 
 struct IRContext
 {
@@ -146,6 +125,7 @@ std::vector<Token> lexSource(const string &source)
         }
     }
 
+    out.push_back(Token{"", TokenType::EndOfFile});
     return out;
 }
 
