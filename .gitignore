@@ -1,0 +1,7 @@
+.vscode/
+*.o
+*.o
+*.ll
+compiler
+input.txt
+output
