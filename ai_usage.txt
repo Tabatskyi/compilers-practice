@@ -171,3 +171,122 @@ clang input.o -o program
 If you still get an error, paste the new input.ll and I’ll adjust further, but this change removes the invalid `( %t0 + 3 )` style emission.
 
 Want subtraction or parentheses next? Just ask.
+
+############################################ practice_2 ############################################
+Tabatskyi: llc-20 -filetype=obj -relocation-model=pic input.ll -o input.o
+llc-20: error: llc-20: input.ll:8:13: error: expected value token
+  store i32 , i32* %x
+            ^
+
+GitHub Copilot: The error occurs because the `lowerExpr` function returns an empty string for invalid expressions (e.g., those not matching the expected pattern of alternating values and `+` operators), leading to malformed LLVM IR like `store i32 , i32* %x` (missing value after `i32`).
+
+To fix this, add a check after calling `lowerExpr` in the assignment handling code to detect invalid expressions and exit with an error, similar to the return statement handling.
+
+```cpp
+// ...existing code...
+
+        if (tok.kind == "identifier" && tok.type == "name") 
+        {
+            if (sawReturn)
+            {
+                std::cerr << "Error: code after return statement\n";
+                return 3;
+            }
+            if (!ctx.vars.count(tok.lexeme))
+            {
+                std::cerr << "Error: undeclared variable " << tok.lexeme << std::endl;
+                return 4;
+            }
+
+            string varName = tok.lexeme;
+            ++idx;
+            if (idx >= tokens.size() || tokens[idx].lexeme != "=")
+            {
+                std::cerr << "Error: expected '=' after identifier " << varName << std::endl;
+                return 5;
+            }
+            ++idx;
+
+            std::vector<Token> exprTokens;
+            while (idx < tokens.size()) 
+            {
+                exprTokens.push_back(tokens[idx]);
+                ++idx;
+            }
+            if (exprTokens.empty())
+            {
+                std::cerr << "Error: expected expression after '='" << std::endl;
+                return 6;
+            }
+
+            string val = lowerExpr(exprTokens, ctx);
+            if (val.empty())
+            {
+                std::cerr << "Error: invalid assignment expression" << std::endl;
+                return 8;
+            }
+            ctx.ir << "  store i32 " << val << ", i32* %" << varName << "\n";
+            continue;
+        }
+
+// ...existing code...
+```
+
+Tabatskyi: ./compiler input.txt output.ll
+Error: unexpected token i32
+
+GitHub Copilot: Updated declaration handling to skip optional specifiers and the trailing newline, preventing `i32` from being treated as unexpected.
+
+````cpp
+// ...existing code...
+            ctx.ir << "  %" << nameTok.lexeme << " = alloca i32\n";
+            ctx.vars[nameTok.lexeme] = nameTok.lexeme;
+            ++idx;
+            while (idx < tokens.size() && tokens[idx].kind == "keyword" &&
+                   (tokens[idx].type == "specifier" || tokens[idx].type == "typename"))
+            {
+                ++idx;
+            }
+            if (idx < tokens.size() && tokens[idx].kind == "newline")
+            {
+                ++idx;
+            }
+            continue;
+// ...existing code...
+````
+
+Tabatskyi: specifiers now mandatory
+
+GitHub Copilot: Mandated at least one specifier after each declaration and tightened newline handling.
+
+````cpp
+// ...existing code...
+            ctx.ir << "  %" << nameTok.lexeme << " = alloca i32\n";
+            ctx.vars[nameTok.lexeme] = nameTok.lexeme;
+            ++idx;
+
+            bool sawSpecifier = false;
+            while (idx < tokens.size() && tokens[idx].kind == "keyword" &&
+                   (tokens[idx].type == "specifier" || tokens[idx].type == "typename"))
+            {
+                sawSpecifier = true;
+                ++idx;
+            }
+            if (!sawSpecifier)
+            {
+                std::cerr << "Error: missing specifier for variable " << nameTok.lexeme << std::endl;
+                return 9;
+            }
+
+            if (idx < tokens.size())
+            {
+                if (tokens[idx].kind != "newline")
+                {
+                    std::cerr << "Error: expected newline after declaration of " << nameTok.lexeme << std::endl;
+                    return 10;
+                }
+                ++idx;
+            }
+            continue;
+// ...existing code...
+````
