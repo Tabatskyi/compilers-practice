@@ -40,20 +40,19 @@ std::unique_ptr<ProgramNode> SyntaxParser::parseProgram()
         skipNewlines();
     }
 
+    std::unique_ptr<ReturnNode> ret;
     const Token* retToken = peek();
-    if (!retToken || retToken->type != TokenType::Return)
+    if (retToken && retToken->type == TokenType::Return)
     {
-        addError("Expected return statement at end of program");
-        return nullptr;
+        ret = parseReturn();
+        if (!ret)
+            return nullptr;
+
+        skipNewlines();
     }
 
-    auto ret = parseReturn();
-    if (!ret)
-        return nullptr;
-
-    skipNewlines();
     if (!atEnd())
-        addError("Unexpected tokens after return statement");
+        addError("Unexpected tokens after program body");
 
     return std::make_unique<ProgramNode>(std::move(statements), std::move(ret));
 }
@@ -208,7 +207,7 @@ std::unique_ptr<ExprNode> SyntaxParser::parseEquality()
 
     while (true)
     {
-        if (match(TokenType::EqualEqual))
+        if (match(TokenType::Equals))
         {
             skipNewlines();
             auto right = parseAdditive();

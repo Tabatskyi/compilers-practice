@@ -20,7 +20,7 @@ enum class TokenType
     BlockStart,
     BlockEnd,
     Assign,
-    EqualEqual,
+    Equals,
     NotEqual,
     Add,
     Sub,

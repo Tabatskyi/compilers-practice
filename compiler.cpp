@@ -84,7 +84,7 @@ std::vector<Token> lexSource(const string& source)
                 }
                 if (c == '=' && i + 1 < source.size() && source[i + 1] == '=')
                 {
-                    out.push_back(Token{"==", TokenType::EqualEqual});
+                    out.push_back(Token{"==", TokenType::Equals});
                     i += 2;
                     continue;
                 }
@@ -203,15 +203,17 @@ public:
     bool analyze(const ProgramNode& program)
     {
         m_errors.clear();
+        m_warnings.clear();
         m_symbols.clear();
         m_returnSeen = false;
         program.accept(*this);
         if (!m_returnSeen)
-            addError("Missing return statement");
+            addWarning("Missing return statement; defaulting to 'return 0'.");
         return m_errors.empty();
     }
 
     const std::vector<std::string>& errors() const { return m_errors; }
+    const std::vector<std::string>& warnings() const { return m_warnings; }
     const std::unordered_map<std::string, VariableInfo>& symbols() const { return m_symbols; }
 
     void visitProgram(const ProgramNode& node) override
@@ -376,8 +378,14 @@ private:
         m_errors.push_back(message);
     }
 
+    void addWarning(const std::string& message)
+    {
+        m_warnings.push_back(message);
+    }
+
     std::unordered_map<std::string, VariableInfo> m_symbols;
     std::vector<std::string> m_errors;
+    std::vector<std::string> m_warnings;
     bool m_returnSeen = false;
 };
 
@@ -425,7 +433,13 @@ public:
         }
 
         if (const auto* ret = node.returnStmt())
+        {
             ret->accept(*this);
+        }
+        else
+        {
+            emitReturn({"0", ValueType::I32});
+        }
     }
 
     void visitDecl(const DeclNode& node) override
@@ -481,11 +495,7 @@ public:
 
         node.expr()->accept(*this);
         CodegenValue value = popValue();
-        value = ensureType(std::move(value), ValueType::I32);
-
-        m_ctx.ir << "  %fmtptr = getelementptr [29 x i8], [29 x i8]* @fmt, i32 0, i32 0\n";
-        m_ctx.ir << "  call i32 (i8*, ...) @printf(i8* %fmtptr, i32 " << value.operand << ")\n";
-        m_ctx.ir << "  ret i32 " << value.operand << "\n";
+        emitReturn(std::move(value));
     }
 
     void visitBinaryOp(const BinaryOpNode& node) override
@@ -661,6 +671,14 @@ private:
                  << ", " << llvmType(var.type) << "* " << var.pointer << "\n";
     }
 
+    void emitReturn(CodegenValue value)
+    {
+        value = ensureType(std::move(value), ValueType::I32);
+        m_ctx.ir << "  %fmtptr = getelementptr [29 x i8], [29 x i8]* @fmt, i32 0, i32 0\n";
+        m_ctx.ir << "  call i32 (i8*, ...) @printf(i8* %fmtptr, i32 " << value.operand << ")\n";
+        m_ctx.ir << "  ret i32 " << value.operand << "\n";
+    }
+
     IRContext& m_ctx;
     std::unordered_map<std::string, CodegenVariable> m_variables;
     std::vector<CodegenValue> m_stack;
@@ -706,7 +724,12 @@ int main(int argc, char** argv)
     }
 
     SemanticAnalyzer semantic;
-    if (!semantic.analyze(*program))
+    bool semanticOk = semantic.analyze(*program);
+
+    for (const auto& warning : semantic.warnings())
+        std::cerr << "Warning: " << warning << std::endl;
+
+    if (!semanticOk)
     {
         for (const auto& err : semantic.errors())
             std::cerr << "Semantic error: " << err << std::endl;
