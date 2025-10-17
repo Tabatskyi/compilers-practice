@@ -5,63 +5,90 @@
 #include <utility>
 #include <vector>
 
-/// Base class for all nodes in the abstract syntax tree.
-class ASTNode
-{
-public:
-	virtual ~ASTNode() = default;
-
-	/// Perform semantic validation for the node. For now, this is a no-op stub.
-	virtual void visit() const {}
-};
-
-/// Forward declarations for node types used in composite structures.
+class ProgramNode;
 class StmtNode;
 class ExprNode;
 class FactorNode;
 class ReturnNode;
+class DeclNode;
+class AssignNode;
+class IDNode;
+class NumberNode;
+class BoolLiteralNode;
+class BinaryOpNode;
 
-using StmtList = std::vector<std::unique_ptr<StmtNode>>;
-
-/// Root of the AST representing an entire program.
-class ProgramNode : public ASTNode
+enum class ValueType
 {
-public:
-	ProgramNode(StmtList stmts, std::unique_ptr<ReturnNode> ret)
-		: m_statements(std::move(stmts)), m_return(std::move(ret)) {}
-
-	const StmtList& statements() const { return m_statements; }
-	const ReturnNode* returnStmt() const { return m_return.get(); }
-
-	void visit() const override {}
-
-private:
-	StmtList m_statements;
-	std::unique_ptr<ReturnNode> m_return;
+	Invalid,
+	I32,
+	I64,
+	Bool
 };
 
-/// Base class for all statement nodes.
+class ASTVisitor
+{
+public:
+	virtual ~ASTVisitor() = default;
+
+	virtual void visitProgram(const ProgramNode& node) = 0;
+	virtual void visitDecl(const DeclNode& node) = 0;
+	virtual void visitAssign(const AssignNode& node) = 0;
+	virtual void visitReturn(const ReturnNode& node) = 0;
+	virtual void visitBinaryOp(const BinaryOpNode& node) = 0;
+	virtual void visitID(const IDNode& node) = 0;
+	virtual void visitNumber(const NumberNode& node) = 0;
+	virtual void visitBoolLiteral(const BoolLiteralNode& node) = 0;
+};
+
+class ASTNode
+{
+public:
+	virtual ~ASTNode() = default;
+	virtual void accept(ASTVisitor& visitor) const = 0;
+};
+
 class StmtNode : public ASTNode
 {
 public:
 	~StmtNode() override = default;
 };
 
-/// Base class for all expression nodes.
 class ExprNode : public ASTNode
 {
 public:
 	~ExprNode() override = default;
+
+	ValueType type() const { return m_type; }
+	void setType(ValueType type) const { m_type = type; }
+
+private:
+	mutable ValueType m_type = ValueType::Invalid;
 };
 
-/// Base class for terminal factors in an expression.
 class FactorNode : public ExprNode
 {
 public:
 	~FactorNode() override = default;
 };
 
-/// Represents an identifier usage.
+class ProgramNode : public ASTNode
+{
+public:
+	using StmtList = std::vector<std::unique_ptr<StmtNode>>;
+
+	ProgramNode(StmtList stmts, std::unique_ptr<ReturnNode> ret)
+		: m_statements(std::move(stmts)), m_return(std::move(ret)) {}
+
+	const StmtList& statements() const { return m_statements; }
+	const ReturnNode* returnStmt() const { return m_return.get(); }
+
+	void accept(ASTVisitor& visitor) const override { visitor.visitProgram(*this); }
+
+private:
+	StmtList m_statements;
+	std::unique_ptr<ReturnNode> m_return;
+};
+
 class IDNode : public FactorNode
 {
 public:
@@ -69,27 +96,38 @@ public:
 
 	const std::string& name() const { return m_name; }
 
-	void visit() const override {}
+	void accept(ASTVisitor& visitor) const override { visitor.visitID(*this); }
 
 private:
 	std::string m_name;
 };
 
-/// Represents an integer literal.
 class NumberNode : public FactorNode
 {
 public:
-	explicit NumberNode(int value) : m_value(value) {}
+	explicit NumberNode(std::int64_t value) : m_value(value) {}
 
-	int value() const { return m_value; }
+	std::int64_t value() const { return m_value; }
 
-	void visit() const override {}
+	void accept(ASTVisitor& visitor) const override { visitor.visitNumber(*this); }
 
 private:
-	int m_value;
+	std::int64_t m_value;
 };
 
-/// Represents a binary operation between two expressions.
+class BoolLiteralNode : public FactorNode
+{
+public:
+	explicit BoolLiteralNode(bool value) : m_value(value) {}
+
+	bool value() const { return m_value; }
+
+	void accept(ASTVisitor& visitor) const override { visitor.visitBoolLiteral(*this); }
+
+private:
+	bool m_value;
+};
+
 class BinaryOpNode : public ExprNode
 {
 public:
@@ -97,7 +135,9 @@ public:
 	{
 		Add,
 		Sub,
-		Mul
+		Mul,
+		Equal,
+		NotEqual
 	};
 
 	BinaryOpNode(Operator op,
@@ -111,7 +151,7 @@ public:
 	const ExprNode* left() const { return m_left.get(); }
 	const ExprNode* right() const { return m_right.get(); }
 
-	void visit() const override {}
+	void accept(ASTVisitor& visitor) const override { visitor.visitBinaryOp(*this); }
 
 private:
 	Operator m_operator;
@@ -119,27 +159,33 @@ private:
 	std::unique_ptr<ExprNode> m_right;
 };
 
-/// Statement node representing a variable declaration.
 class DeclNode : public StmtNode
 {
 public:
-	DeclNode(std::string identifier, bool isMutable, std::unique_ptr<ExprNode> initializer)
-		    : m_identifier(std::move(identifier)), m_isMutable(isMutable), m_initializer(std::move(initializer)) {}
+	DeclNode(ValueType type,
+			std::string identifier,
+			bool isMutable,
+			std::unique_ptr<ExprNode> initializer)
+	    : m_type(type),
+	      m_identifier(std::move(identifier)),
+	      m_isMutable(isMutable),
+	      m_initializer(std::move(initializer)) {}
 
+	ValueType declaredType() const { return m_type; }
 	const std::string& identifier() const { return m_identifier; }
 	bool isMutable() const { return m_isMutable; }
 	bool hasInitializer() const { return static_cast<bool>(m_initializer); }
 	const ExprNode* initializer() const { return m_initializer.get(); }
 
-	void visit() const override {}
+	void accept(ASTVisitor& visitor) const override { visitor.visitDecl(*this); }
 
 private:
+	ValueType m_type;
 	std::string m_identifier;
 	bool m_isMutable;
 	std::unique_ptr<ExprNode> m_initializer;
 };
 
-/// Statement node representing an assignment to an existing variable.
 class AssignNode : public StmtNode
 {
 public:
@@ -149,14 +195,13 @@ public:
 	const std::string& identifier() const { return m_identifier; }
 	const ExprNode* value() const { return m_value.get(); }
 
-	void visit() const override {}
+	void accept(ASTVisitor& visitor) const override { visitor.visitAssign(*this); }
 
 private:
 	std::string m_identifier;
 	std::unique_ptr<ExprNode> m_value;
 };
 
-/// Return statement node.
 class ReturnNode : public ASTNode
 {
 public:
@@ -165,9 +210,8 @@ public:
 
 	const ExprNode* expr() const { return m_expr.get(); }
 
-	void visit() const override {}
+	void accept(ASTVisitor& visitor) const override { visitor.visitReturn(*this); }
 
 private:
 	std::unique_ptr<ExprNode> m_expr;
 };
-

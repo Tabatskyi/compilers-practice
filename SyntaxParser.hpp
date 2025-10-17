@@ -35,7 +35,10 @@ public:
 
     /// Parse expressions and sub-components.
     std::unique_ptr<ExprNode> parseExpr();
-    std::unique_ptr<FactorNode> parseFactor();
+    std::unique_ptr<ExprNode> parseEquality();
+    std::unique_ptr<ExprNode> parseAdditive();
+    std::unique_ptr<ExprNode> parseMultiplicative();
+    std::unique_ptr<ExprNode> parsePrimary();
 
     /// Whether parsing produced any errors.
     bool hasErrors() const { return !m_errors.empty(); }
@@ -49,7 +52,7 @@ private:
     bool expect(TokenType type, const std::string& message);
 
     void skipNewlines();
-    std::unique_ptr<ExprNode> parseBinaryTail(std::unique_ptr<ExprNode> left);
+    ValueType parseType();
 
     void addError(const std::string& message);
 

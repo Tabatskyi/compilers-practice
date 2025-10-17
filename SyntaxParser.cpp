@@ -19,7 +19,7 @@ const Token* SyntaxParser::eat()
 
 std::unique_ptr<ProgramNode> SyntaxParser::parseProgram()
 {
-    StmtList statements;
+    ProgramNode::StmtList statements;
 
     skipNewlines();
 
@@ -72,6 +72,8 @@ std::unique_ptr<StmtNode> SyntaxParser::parseStmt()
     switch (token->type)
     {
         case TokenType::I32:
+        case TokenType::I64:
+        case TokenType::Bool:
             return parseDecl();
 
         case TokenType::Identifier:
@@ -98,14 +100,18 @@ std::unique_ptr<ReturnNode> SyntaxParser::parseReturn()
 
 std::unique_ptr<DeclNode> SyntaxParser::parseDecl()
 {
-    if (!expect(TokenType::I32, "Expected 'i32' at start of declaration"))
+    ValueType type = parseType();
+    if (type == ValueType::Invalid)
         return nullptr;
 
     skipNewlines();
 
     bool isMutable = false;
     while (match(TokenType::Mut))
+    {
         isMutable = true;
+        skipNewlines();
+    }
 
     const Token* identTok = peek();
     if (!identTok || identTok->type != TokenType::Identifier)
@@ -131,7 +137,36 @@ std::unique_ptr<DeclNode> SyntaxParser::parseDecl()
             return nullptr;
     }
 
-    return std::make_unique<DeclNode>(std::move(identifier), isMutable, std::move(initializer));
+    return std::make_unique<DeclNode>(type, std::move(identifier), isMutable, std::move(initializer));
+}
+
+ValueType SyntaxParser::parseType()
+{
+    const Token* token = peek();
+    if (!token)
+    {
+        addError("Expected type specifier");
+        return ValueType::Invalid;
+    }
+
+    switch (token->type)
+    {
+        case TokenType::I32:
+            eat();
+            return ValueType::I32;
+
+        case TokenType::I64:
+            eat();
+            return ValueType::I64;
+
+        case TokenType::Bool:
+            eat();
+            return ValueType::Bool;
+
+        default:
+            addError("Expected type specifier");
+            return ValueType::Invalid;
+    }
 }
 
 std::unique_ptr<AssignNode> SyntaxParser::parseAssign()
@@ -162,21 +197,106 @@ std::unique_ptr<AssignNode> SyntaxParser::parseAssign()
 
 std::unique_ptr<ExprNode> SyntaxParser::parseExpr()
 {
-    auto first = parseFactor();
-    if (!first)
-        return nullptr;
-
-    std::unique_ptr<ExprNode> expr = std::move(first);
-    auto combined = parseBinaryTail(std::move(expr));
-    return combined ? std::move(combined) : nullptr;
+    return parseEquality();
 }
 
-std::unique_ptr<FactorNode> SyntaxParser::parseFactor()
+std::unique_ptr<ExprNode> SyntaxParser::parseEquality()
+{
+    auto left = parseAdditive();
+    if (!left)
+        return nullptr;
+
+    while (true)
+    {
+        if (match(TokenType::EqualEqual))
+        {
+            skipNewlines();
+            auto right = parseAdditive();
+            if (!right)
+                return nullptr;
+            left = std::make_unique<BinaryOpNode>(BinaryOpNode::Operator::Equal, std::move(left), std::move(right));
+            skipNewlines();
+            continue;
+        }
+
+        if (match(TokenType::NotEqual))
+        {
+            skipNewlines();
+            auto right = parseAdditive();
+            if (!right)
+                return nullptr;
+            left = std::make_unique<BinaryOpNode>(BinaryOpNode::Operator::NotEqual, std::move(left), std::move(right));
+            skipNewlines();
+            continue;
+        }
+
+        break;
+    }
+
+    return left;
+}
+
+std::unique_ptr<ExprNode> SyntaxParser::parseAdditive()
+{
+    auto left = parseMultiplicative();
+    if (!left)
+        return nullptr;
+
+    while (true)
+    {
+        if (match(TokenType::Add))
+        {
+            skipNewlines();
+            auto right = parseMultiplicative();
+            if (!right)
+                return nullptr;
+            left = std::make_unique<BinaryOpNode>(BinaryOpNode::Operator::Add, std::move(left), std::move(right));
+            skipNewlines();
+            continue;
+        }
+
+        if (match(TokenType::Sub))
+        {
+            skipNewlines();
+            auto right = parseMultiplicative();
+            if (!right)
+                return nullptr;
+            left = std::make_unique<BinaryOpNode>(BinaryOpNode::Operator::Sub, std::move(left), std::move(right));
+            skipNewlines();
+            continue;
+        }
+
+        break;
+    }
+
+    return left;
+}
+
+std::unique_ptr<ExprNode> SyntaxParser::parseMultiplicative()
+{
+    auto left = parsePrimary();
+    if (!left)
+        return nullptr;
+
+    while (match(TokenType::Mul))
+    {
+        skipNewlines();
+        auto right = parsePrimary();
+        if (!right)
+            return nullptr;
+        left = std::make_unique<BinaryOpNode>(BinaryOpNode::Operator::Mul, std::move(left), std::move(right));
+        skipNewlines();
+    }
+
+    return left;
+}
+
+std::unique_ptr<ExprNode> SyntaxParser::parsePrimary()
 {
     const Token* token = peek();
     if (!token)
     {
-        addError("Unexpected end of input while parsing factor");
+        addError("Unexpected end of input while parsing expression");
         return nullptr;
     }
 
@@ -191,9 +311,17 @@ std::unique_ptr<FactorNode> SyntaxParser::parseFactor()
 
         case TokenType::Number:
         {
-            int value = std::stoi(token->lexeme);
+            std::int64_t value = std::stoll(token->lexeme);
             eat();
             return std::make_unique<NumberNode>(value);
+        }
+
+        case TokenType::True:
+        case TokenType::False:
+        {
+            bool value = (token->type == TokenType::True);
+            eat();
+            return std::make_unique<BoolLiteralNode>(value);
         }
 
         default:
@@ -230,44 +358,6 @@ bool SyntaxParser::expect(TokenType type, const std::string& message)
 void SyntaxParser::skipNewlines()
 {
     while (match(TokenType::Newline)) {}
-}
-
-std::unique_ptr<ExprNode> SyntaxParser::parseBinaryTail(std::unique_ptr<ExprNode> left)
-{
-    if (!left)
-        return nullptr;
-
-    while (const Token* token = peek())
-    {
-        BinaryOpNode::Operator op;
-        switch (token->type)
-        {
-            case TokenType::Add:
-                op = BinaryOpNode::Operator::Add;
-                break;
-            case TokenType::Sub:
-                op = BinaryOpNode::Operator::Sub;
-                break;
-            case TokenType::Mul:
-                op = BinaryOpNode::Operator::Mul;
-                break;
-            default:
-                return left;
-        }
-
-        eat();
-        skipNewlines();
-
-        auto rightFactor = parseFactor();
-        if (!rightFactor)
-            return nullptr;
-
-        std::unique_ptr<ExprNode> right = std::move(rightFactor);
-        left = std::make_unique<BinaryOpNode>(op, std::move(left), std::move(right));
-        skipNewlines();
-    }
-
-    return left;
 }
 
 void SyntaxParser::addError(const std::string& message)
