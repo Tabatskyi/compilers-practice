@@ -25,8 +25,8 @@ struct VariableInfo
 {
     ValueType type;
     bool isMutable;
-    std::string name;
-    std::size_t scopeId;
+    string name;
+    size_t scopeId;
 };
 
 static const std::unordered_map<string, TokenType> keywordMap =
@@ -165,7 +165,7 @@ std::vector<Token> lexSource(const string& source)
     return out;
 }
 
-static std::string typeToString(ValueType type)
+static string typeToString(ValueType type)
 {
     switch (type)
     {
@@ -208,6 +208,11 @@ static bool isAssignable(ValueType target, ValueType source)
     return false;
 }
 
+static bool canConvertToI32(ValueType type)
+{
+    return type == ValueType::I32 || type == ValueType::I64 || type == ValueType::Bool;
+}
+
 class SemanticAnalyzer : public ASTVisitor
 {
 public:
@@ -229,8 +234,8 @@ public:
         return m_errors.empty();
     }
 
-    const std::vector<std::string>& errors() const { return m_errors; }
-    const std::vector<std::string>& warnings() const { return m_warnings; }
+    const std::vector<string>& errors() const { return m_errors; }
+    const std::vector<string>& warnings() const { return m_warnings; }
     const std::unordered_map<SymbolID, VariableInfo>& symbols() const { return m_symbols; }
 
     void visitProgram(const ProgramNode& node) override
@@ -257,8 +262,8 @@ public:
 
     void visitDecl(const DeclNode& node) override
     {
-        const std::string& name = node.identifier();
-        std::size_t scope = currentScopeId();
+        const string& name = node.identifier();
+        size_t scope = currentScopeId();
         auto& scopeMap = m_scopeSymbols[scope];
         if (scopeMap.count(name))
         {
@@ -340,10 +345,8 @@ public:
 
         node.expr()->accept(*this);
         ValueType type = node.expr()->type();
-        if (type != ValueType::I32)
-        {
-            addError("Return type must be i32, got " + typeToString(type));
-        }
+        if (!canConvertToI32(type))
+            addError("Return type must be convertible to i32, got " + typeToString(type));
     }
 
     void visitBinaryOp(const BinaryOpNode& node) override
@@ -442,10 +445,10 @@ public:
     }
 
 private:
-    void enterScope(std::size_t scopeId)
+    void enterScope(size_t scopeId)
     {
         m_scopeStack.push_back(scopeId);
-        m_scopeSymbols.try_emplace(scopeId, std::unordered_map<std::string, SymbolID>{});
+        m_scopeSymbols.try_emplace(scopeId, std::unordered_map<string, SymbolID>{});
     }
 
     void exitScope()
@@ -454,12 +457,12 @@ private:
             m_scopeStack.pop_back();
     }
 
-    std::size_t currentScopeId() const
+    size_t currentScopeId() const
     {
         return m_scopeStack.empty() ? 0 : m_scopeStack.back();
     }
 
-    SymbolID resolveSymbol(const std::string& name) const
+    SymbolID resolveSymbol(const string& name) const
     {
         for (auto it = m_scopeStack.rbegin(); it != m_scopeStack.rend(); ++it)
         {
@@ -474,28 +477,28 @@ private:
         return InvalidSymbolID;
     }
 
-    void addError(const std::string& message)
+    void addError(const string& message)
     {
         m_errors.push_back(message);
     }
 
-    void addWarning(const std::string& message)
+    void addWarning(const string& message)
     {
         m_warnings.push_back(message);
     }
 
     std::unordered_map<SymbolID, VariableInfo> m_symbols;
-    std::unordered_map<std::size_t, std::unordered_map<std::string, SymbolID>> m_scopeSymbols;
-    std::vector<std::size_t> m_scopeStack;
+    std::unordered_map<size_t, std::unordered_map<string, SymbolID>> m_scopeSymbols;
+    std::vector<size_t> m_scopeStack;
     SymbolID m_nextSymbolId = 0;
-    std::vector<std::string> m_errors;
-    std::vector<std::string> m_warnings;
+    std::vector<string> m_errors;
+    std::vector<string> m_warnings;
     bool m_returnSeen = false;
 };
 
 struct CodegenValue
 {
-    std::string operand;
+    string operand;
     ValueType type;
 };
 
@@ -505,7 +508,7 @@ struct CodegenVariable
     bool isMutable = false;
     bool allocated = false;
     bool initialized = false;
-    std::string pointer;
+    string pointer;
 };
 
 class CodeGenerator : public ASTVisitor
@@ -595,12 +598,12 @@ public:
         CodegenValue condValue = popValue();
         condValue = ensureType(std::move(condValue), ValueType::Bool);
 
-        std::string thenLabel = nextLabel("then");
-        std::string endLabel = nextLabel("endif");
+        string thenLabel = nextLabel("then");
+        string endLabel = nextLabel("endif");
         bool hasElse = node.elseBlock() != nullptr;
-        std::string elseLabel = hasElse ? nextLabel("else") : "";
+        string elseLabel = hasElse ? nextLabel("else") : "";
 
-        std::string falseLabel = hasElse ? elseLabel : endLabel;
+        string falseLabel = hasElse ? elseLabel : endLabel;
 
         emitInstruction("br i1 " + condValue.operand + ", label %" + thenLabel + ", label %" + falseLabel);
         m_currentBlockTerminated = true;
@@ -655,7 +658,7 @@ public:
 
                 const char* opInstr = (node.op() == BinaryOpNode::Operator::Add) ? "add" :
                                       (node.op() == BinaryOpNode::Operator::Sub) ? "sub" : "mul";
-                std::string tmp = nextTemp();
+                string tmp = nextTemp();
                 emitInstruction(tmp + " = " + opInstr + " " + llvmType(targetType) + " " +
                                 leftValue.operand + ", " + rightValue.operand);
                 pushValue({tmp, targetType});
@@ -669,7 +672,7 @@ public:
                 rightValue = ensureType(std::move(rightValue), operandType);
 
                 const char* cmp = (node.op() == BinaryOpNode::Operator::Equal) ? "icmp eq" : "icmp ne";
-                std::string tmp = nextTemp();
+                string tmp = nextTemp();
                 emitInstruction(tmp + " = " + cmp + " " + llvmType(operandType) + " " +
                                 leftValue.operand + ", " + rightValue.operand);
                 pushValue({tmp, ValueType::Bool});
@@ -687,7 +690,7 @@ public:
 
         CodegenValue value = popValue();
         value = ensureType(std::move(value), ValueType::Bool);
-        std::string tmp = nextTemp();
+        string tmp = nextTemp();
         emitInstruction(tmp + " = xor i1 " + value.operand + ", 1");
         pushValue({tmp, ValueType::Bool});
     }
@@ -706,7 +709,7 @@ public:
         if (!var.initialized)
             storeValue(var, {zeroLiteral(var.type), var.type});
 
-        std::string tmp = nextTemp();
+        string tmp = nextTemp();
         emitInstruction(tmp + " = load " + llvmType(var.type) + ", " +
                         llvmType(var.type) + "* " + var.pointer);
         pushValue({tmp, var.type});
@@ -735,7 +738,7 @@ public:
     }
 
 private:
-    std::string llvmType(ValueType type) const
+    string llvmType(ValueType type) const
     {
         switch (type)
         {
@@ -746,7 +749,7 @@ private:
         }
     }
 
-    std::string zeroLiteral(ValueType type) const
+    string zeroLiteral(ValueType type) const
     {
         switch (type)
         {
@@ -759,22 +762,22 @@ private:
         }
     }
 
-    std::string nextTemp()
+    string nextTemp()
     {
         return "%t" + std::to_string(m_ctx.tempId++);
     }
 
-    std::string nextLabel(const std::string& base)
+    string nextLabel(const string& base)
     {
         return base + std::to_string(m_labelId++);
     }
 
-    void emitLabel(const std::string& label)
+    void emitLabel(const string& label)
     {
         m_ctx.ir << label << ":\n";
     }
 
-    void emitInstruction(const std::string& text)
+    void emitInstruction(const string& text)
     {
         m_ctx.ir << "  " << text << "\n";
     }
@@ -823,14 +826,21 @@ private:
 
         if (target == ValueType::I64 && value.type == ValueType::I32)
         {
-            std::string tmp = nextTemp();
+            string tmp = nextTemp();
             emitInstruction(tmp + " = sext i32 " + value.operand + " to i64");
             return {tmp, ValueType::I64};
         }
 
+        if (target == ValueType::I32 && value.type == ValueType::I64)
+        {
+            string tmp = nextTemp();
+            emitInstruction(tmp + " = trunc i64 " + value.operand + " to i32");
+            return {tmp, ValueType::I32};
+        }
+
         if (target == ValueType::I32 && value.type == ValueType::Bool)
         {
-            std::string tmp = nextTemp();
+            string tmp = nextTemp();
             emitInstruction(tmp + " = zext i1 " + value.operand + " to i32");
             return {tmp, ValueType::I32};
         }
@@ -858,14 +868,14 @@ private:
     void emitReturn(CodegenValue value)
     {
         value = ensureType(std::move(value), ValueType::I32);
-        std::string fmtPtr = nextTemp();
+        string fmtPtr = nextTemp();
         emitInstruction(fmtPtr + " = getelementptr [29 x i8], [29 x i8]* @fmt, i32 0, i32 0");
         emitInstruction("call i32 (i8*, ...) @printf(i8* " + fmtPtr + ", i32 " + value.operand + ")");
         emitInstruction("ret i32 " + value.operand);
         m_currentBlockTerminated = true;
     }
 
-    bool generateBlock(const BlockNode& node, const std::string& exitLabel)
+    bool generateBlock(const BlockNode& node, const string& exitLabel)
     {
         bool savedTerminated = m_currentBlockTerminated;
         m_currentBlockTerminated = false;

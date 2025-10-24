@@ -27,7 +27,7 @@ enum class ValueType
 	Bool
 };
 
-using SymbolID = std::size_t;
+using SymbolID = size_t;
 constexpr SymbolID InvalidSymbolID = static_cast<SymbolID>(-1);
 
 class ASTVisitor
@@ -84,17 +84,17 @@ class ProgramNode : public ASTNode
 public:
 	using StmtList = std::vector<std::unique_ptr<StmtNode>>;
 
-	explicit ProgramNode(StmtList stmts, std::size_t scopeId = 0)
+	explicit ProgramNode(StmtList stmts, size_t scopeId = 0)
 		: m_statements(std::move(stmts)), m_scopeId(scopeId) {}
 
 	const StmtList& statements() const { return m_statements; }
-	std::size_t scopeId() const { return m_scopeId; }
+	size_t scopeId() const { return m_scopeId; }
 
 	void accept(ASTVisitor& visitor) const override { visitor.visitProgram(*this); }
 
 private:
 	StmtList m_statements;
-	std::size_t m_scopeId;
+	size_t m_scopeId;
 };
 
 class BlockNode : public ASTNode
@@ -102,17 +102,17 @@ class BlockNode : public ASTNode
 public:
 	using StmtList = std::vector<std::unique_ptr<StmtNode>>;
 
-	BlockNode(StmtList stmts, std::size_t scopeId)
+	BlockNode(StmtList stmts, size_t scopeId)
 		: m_statements(std::move(stmts)), m_scopeId(scopeId) {}
 
 	const StmtList& statements() const { return m_statements; }
-	std::size_t scopeId() const { return m_scopeId; }
+	size_t scopeId() const { return m_scopeId; }
 
 	void accept(ASTVisitor& visitor) const override { visitor.visitBlock(*this); }
 
 private:
 	StmtList m_statements;
-	std::size_t m_scopeId;
+	size_t m_scopeId;
 };
 
 class IDNode : public FactorNode

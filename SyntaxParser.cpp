@@ -2,9 +2,9 @@
 
 SyntaxParser::SyntaxParser(std::vector<Token> tokens): m_tokens(std::move(tokens)) {}
 
-const Token* SyntaxParser::peek(std::size_t offset) const
+const Token* SyntaxParser::peek(size_t offset) const
 {
-    std::size_t target = m_index + offset;
+    size_t target = m_index + offset;
     if (target >= m_tokens.size())
         return nullptr;
     return& m_tokens[target];
@@ -114,7 +114,7 @@ std::unique_ptr<IfNode> SyntaxParser::parseIf()
     return std::make_unique<IfNode>(std::move(condition), std::move(thenBlock), std::move(elseBlock));
 }
 
-std::unique_ptr<BlockNode> SyntaxParser::parseBlock(std::size_t scopeId)
+std::unique_ptr<BlockNode> SyntaxParser::parseBlock(size_t scopeId)
 {
     if (!expect(TokenType::BlockStart, "Expected '{' to start block"))
         return nullptr;
@@ -424,7 +424,7 @@ void SyntaxParser::skipNewlines()
     while (match(TokenType::Newline)) {}
 }
 
-std::size_t SyntaxParser::allocateScopeId()
+size_t SyntaxParser::allocateScopeId()
 {
     return m_nextScopeId++;
 }

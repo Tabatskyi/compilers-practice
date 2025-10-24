@@ -15,7 +15,7 @@ public:
     explicit SyntaxParser(std::vector<Token> tokens);
 
     /// Peek at the token `offset` positions ahead. Returns nullptr when out of bounds.
-    const Token* peek(std::size_t offset = 0) const;
+    const Token* peek(size_t offset = 0) const;
 
     /// Consume and return the current token. Returns nullptr if already at end.
     const Token* eat();
@@ -29,7 +29,7 @@ public:
     /// Parse a return statement.
     std::unique_ptr<ReturnNode> parseReturn();
     std::unique_ptr<IfNode> parseIf();
-    std::unique_ptr<BlockNode> parseBlock(std::size_t scopeId);
+    std::unique_ptr<BlockNode> parseBlock(size_t scopeId);
 
     /// Parse either a declaration or assignment depending on current token.
     std::unique_ptr<DeclNode> parseDecl();
@@ -56,12 +56,12 @@ private:
 
     void skipNewlines();
     ValueType parseType();
-    std::size_t allocateScopeId();
+    size_t allocateScopeId();
 
     void addError(const std::string& message);
 
     std::vector<Token> m_tokens;
-    std::size_t m_index = 0;
+    size_t m_index = 0;
     std::vector<std::string> m_errors;
-    std::size_t m_nextScopeId = 1;
+    size_t m_nextScopeId = 1;
 };
