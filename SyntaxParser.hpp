@@ -28,6 +28,8 @@ public:
 
     /// Parse a return statement.
     std::unique_ptr<ReturnNode> parseReturn();
+    std::unique_ptr<IfNode> parseIf();
+    std::unique_ptr<BlockNode> parseBlock(std::size_t scopeId);
 
     /// Parse either a declaration or assignment depending on current token.
     std::unique_ptr<DeclNode> parseDecl();
@@ -38,6 +40,7 @@ public:
     std::unique_ptr<ExprNode> parseEquality();
     std::unique_ptr<ExprNode> parseAdditive();
     std::unique_ptr<ExprNode> parseMultiplicative();
+    std::unique_ptr<ExprNode> parseUnary();
     std::unique_ptr<ExprNode> parsePrimary();
 
     /// Whether parsing produced any errors.
@@ -53,10 +56,12 @@ private:
 
     void skipNewlines();
     ValueType parseType();
+    std::size_t allocateScopeId();
 
     void addError(const std::string& message);
 
     std::vector<Token> m_tokens;
     std::size_t m_index = 0;
     std::vector<std::string> m_errors;
+    std::size_t m_nextScopeId = 1;
 };

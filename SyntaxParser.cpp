@@ -25,13 +25,6 @@ std::unique_ptr<ProgramNode> SyntaxParser::parseProgram()
 
     while (!atEnd())
     {
-        const Token* token = peek();
-        if (!token)
-            break;
-
-        if (token->type == TokenType::Return)
-            break;
-
         auto stmt = parseStmt();
         if (!stmt)
             return nullptr;
@@ -40,21 +33,10 @@ std::unique_ptr<ProgramNode> SyntaxParser::parseProgram()
         skipNewlines();
     }
 
-    std::unique_ptr<ReturnNode> ret;
-    const Token* retToken = peek();
-    if (retToken && retToken->type == TokenType::Return)
-    {
-        ret = parseReturn();
-        if (!ret)
-            return nullptr;
-
-        skipNewlines();
-    }
-
     if (!atEnd())
         addError("Unexpected tokens after program body");
 
-    return std::make_unique<ProgramNode>(std::move(statements), std::move(ret));
+    return std::make_unique<ProgramNode>(std::move(statements), 0);
 }
 
 std::unique_ptr<StmtNode> SyntaxParser::parseStmt()
@@ -78,6 +60,12 @@ std::unique_ptr<StmtNode> SyntaxParser::parseStmt()
         case TokenType::Identifier:
             return parseAssign();
 
+        case TokenType::Return:
+            return parseReturn();
+
+        case TokenType::If:
+            return parseIf();
+
         default:
             addError("Unexpected token '" + token->lexeme + "' at start of statement");
             return nullptr;
@@ -95,6 +83,69 @@ std::unique_ptr<ReturnNode> SyntaxParser::parseReturn()
         return nullptr;
 
     return std::make_unique<ReturnNode>(std::move(expr));
+}
+
+std::unique_ptr<IfNode> SyntaxParser::parseIf()
+{
+    if (!expect(TokenType::If, "Expected 'if'"))
+        return nullptr;
+
+    skipNewlines();
+    auto condition = parseExpr();
+    if (!condition)
+        return nullptr;
+
+    skipNewlines();
+    auto thenBlock = parseBlock(allocateScopeId());
+    if (!thenBlock)
+        return nullptr;
+
+    skipNewlines();
+    std::unique_ptr<BlockNode> elseBlock;
+    if (match(TokenType::Else))
+    {
+        skipNewlines();
+        elseBlock = parseBlock(allocateScopeId());
+        if (!elseBlock)
+            return nullptr;
+        skipNewlines();
+    }
+
+    return std::make_unique<IfNode>(std::move(condition), std::move(thenBlock), std::move(elseBlock));
+}
+
+std::unique_ptr<BlockNode> SyntaxParser::parseBlock(std::size_t scopeId)
+{
+    if (!expect(TokenType::BlockStart, "Expected '{' to start block"))
+        return nullptr;
+
+    BlockNode::StmtList statements;
+    skipNewlines();
+
+    while (true)
+    {
+        const Token* token = peek();
+        if (!token)
+        {
+            addError("Unexpected end of input inside block");
+            return nullptr;
+        }
+
+        if (token->type == TokenType::BlockEnd)
+        {
+            eat();
+            break;
+        }
+
+        auto stmt = parseStmt();
+        if (!stmt)
+            return nullptr;
+
+        statements.push_back(std::move(stmt));
+        skipNewlines();
+    }
+
+    return std::make_unique<BlockNode>(std::move(statements), scopeId);
 }
 
 std::unique_ptr<DeclNode> SyntaxParser::parseDecl()
@@ -273,14 +324,14 @@ std::unique_ptr<ExprNode> SyntaxParser::parseAdditive()
 
 std::unique_ptr<ExprNode> SyntaxParser::parseMultiplicative()
 {
-    auto left = parsePrimary();
+    auto left = parseUnary();
     if (!left)
         return nullptr;
 
     while (match(TokenType::Mul))
     {
         skipNewlines();
-        auto right = parsePrimary();
+        auto right = parseUnary();
         if (!right)
             return nullptr;
         left = std::make_unique<BinaryOpNode>(BinaryOpNode::Operator::Mul, std::move(left), std::move(right));
@@ -288,6 +339,20 @@ std::unique_ptr<ExprNode> SyntaxParser::parseMultiplicative()
     }
 
     return left;
+}
+
+std::unique_ptr<ExprNode> SyntaxParser::parseUnary()
+{
+    if (match(TokenType::Not))
+    {
+        skipNewlines();
+        auto operand = parseUnary();
+        if (!operand)
+            return nullptr;
+        return std::make_unique<UnaryOpNode>(UnaryOpNode::Operator::LogicalNot, std::move(operand));
+    }
+
+    return parsePrimary();
 }
 
 std::unique_ptr<ExprNode> SyntaxParser::parsePrimary()
@@ -357,6 +422,11 @@ bool SyntaxParser::expect(TokenType type, const std::string& message)
 void SyntaxParser::skipNewlines()
 {
     while (match(TokenType::Newline)) {}
+}
+
+std::size_t SyntaxParser::allocateScopeId()
+{
+    return m_nextScopeId++;
 }
 
 void SyntaxParser::addError(const std::string& message)
