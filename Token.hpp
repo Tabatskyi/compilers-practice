@@ -12,6 +12,8 @@ enum class TokenType
     Var,
     Mut,
     Return,
+    If,
+    Else,
     I32,
     I64,
     Bool,
@@ -22,6 +24,7 @@ enum class TokenType
     Assign,
     Equals,
     NotEqual,
+    Not,
     Add,
     Sub,
     Mul

@@ -2,6 +2,7 @@
 #include "SyntaxParser.hpp"
 
 #include <cctype>
+#include <cstddef>
 #include <cstdint>
 #include <fstream>
 #include <iostream>
@@ -24,6 +25,8 @@ struct VariableInfo
 {
     ValueType type;
     bool isMutable;
+    string name;
+    size_t scopeId;
 };
 
 static const std::unordered_map<string, TokenType> keywordMap =
@@ -31,6 +34,8 @@ static const std::unordered_map<string, TokenType> keywordMap =
     {"var", TokenType::Var},
     {"mut", TokenType::Mut},
     {"return", TokenType::Return},
+    {"if", TokenType::If},
+    {"else", TokenType::Else},
     {"i32", TokenType::I32},
     {"i64", TokenType::I64},
     {"bool", TokenType::Bool},
@@ -94,6 +99,12 @@ std::vector<Token> lexSource(const string& source)
                     i += 2;
                     continue;
                 }
+                if (c == '!')
+                {
+                    out.push_back(Token{"!", TokenType::Not});
+                    ++i;
+                    continue;
+                }
                 if (std::isalpha(static_cast<unsigned char>(c)) || c == '_')
                 {
                     buffer.assign(1, c);
@@ -154,7 +165,7 @@ std::vector<Token> lexSource(const string& source)
     return out;
 }
 
-static std::string typeToString(ValueType type)
+static string typeToString(ValueType type)
 {
     switch (type)
     {
@@ -197,6 +208,11 @@ static bool isAssignable(ValueType target, ValueType source)
     return false;
 }
 
+static bool canConvertToI32(ValueType type)
+{
+    return type == ValueType::I32 || type == ValueType::I64 || type == ValueType::Bool;
+}
+
 class SemanticAnalyzer : public ASTVisitor
 {
 public:
@@ -205,39 +221,55 @@ public:
         m_errors.clear();
         m_warnings.clear();
         m_symbols.clear();
+        m_scopeSymbols.clear();
+        m_scopeStack.clear();
+        m_nextSymbolId = 0;
         m_returnSeen = false;
+
         program.accept(*this);
+
         if (!m_returnSeen)
             addWarning("Missing return statement; defaulting to 'return 0'.");
+
         return m_errors.empty();
     }
 
-    const std::vector<std::string>& errors() const { return m_errors; }
-    const std::vector<std::string>& warnings() const { return m_warnings; }
-    const std::unordered_map<std::string, VariableInfo>& symbols() const { return m_symbols; }
+    const std::vector<string>& errors() const { return m_errors; }
+    const std::vector<string>& warnings() const { return m_warnings; }
+    const std::unordered_map<SymbolID, VariableInfo>& symbols() const { return m_symbols; }
 
     void visitProgram(const ProgramNode& node) override
     {
+        enterScope(node.scopeId());
         for (const auto& stmt : node.statements())
         {
             if (stmt)
                 stmt->accept(*this);
         }
+        exitScope();
+    }
 
-        if (const auto* ret = node.returnStmt())
-            ret->accept(*this);
+    void visitBlock(const BlockNode& node) override
+    {
+        enterScope(node.scopeId());
+        for (const auto& stmt : node.statements())
+        {
+            if (stmt)
+                stmt->accept(*this);
+        }
+        exitScope();
     }
 
     void visitDecl(const DeclNode& node) override
     {
-        const std::string& name = node.identifier();
-        if (m_symbols.count(name))
+        const string& name = node.identifier();
+        size_t scope = currentScopeId();
+        auto& scopeMap = m_scopeSymbols[scope];
+        if (scopeMap.count(name))
         {
             addError("Variable '" + name + "' redeclared");
             return;
         }
-
-        m_symbols.emplace(name, VariableInfo{node.declaredType(), node.isMutable()});
 
         if (const ExprNode* init = node.initializer())
         {
@@ -249,33 +281,57 @@ public:
                          " with value of type " + typeToString(initType));
             }
         }
+
+        SymbolID symbolId = m_nextSymbolId++;
+        scopeMap.emplace(name, symbolId);
+        m_symbols.emplace(symbolId, VariableInfo{node.declaredType(), node.isMutable(), name, scope});
+        node.setSymbolId(symbolId);
     }
 
     void visitAssign(const AssignNode& node) override
     {
-        auto it = m_symbols.find(node.identifier());
-        if (it == m_symbols.end())
+        SymbolID symbolId = resolveSymbol(node.identifier());
+        if (symbolId == InvalidSymbolID)
         {
             addError("Assignment to undeclared variable '" + node.identifier() + "'");
         }
-        else if (!it->second.isMutable)
+        else
         {
-            addError("Variable '" + node.identifier() + "' is immutable");
+            const auto& info = m_symbols[symbolId];
+            if (!info.isMutable)
+                addError("Variable '" + node.identifier() + "' is immutable");
+            node.setSymbolId(symbolId);
         }
 
         if (const ExprNode* value = node.value())
         {
             value->accept(*this);
-            if (it != m_symbols.end())
+            if (symbolId != InvalidSymbolID)
             {
+                const auto& info = m_symbols[symbolId];
                 ValueType valueType = value->type();
-                if (!isAssignable(it->second.type, valueType))
+                if (!isAssignable(info.type, valueType))
                 {
                     addError("Cannot assign value of type " + typeToString(valueType) +
-                             " to variable '" + node.identifier() + "' of type " + typeToString(it->second.type));
+                             " to variable '" + node.identifier() + "' of type " + typeToString(info.type));
                 }
             }
         }
+    }
+
+    void visitIf(const IfNode& node) override
+    {
+        if (const ExprNode* cond = node.condition())
+        {
+            cond->accept(*this);
+            if (cond->type() != ValueType::Bool)
+                addError("Condition of if statement must be bool");
+        }
+
+        if (const BlockNode* thenBlock = node.thenBlock())
+            thenBlock->accept(*this);
+        if (const BlockNode* elseBlock = node.elseBlock())
+            elseBlock->accept(*this);
     }
 
     void visitReturn(const ReturnNode& node) override
@@ -289,10 +345,8 @@ public:
 
         node.expr()->accept(*this);
         ValueType type = node.expr()->type();
-        if (type != ValueType::I32)
-        {
-            addError("Return type must be i32, got " + typeToString(type));
-        }
+        if (!canConvertToI32(type))
+            addError("Return type must be convertible to i32, got " + typeToString(type));
     }
 
     void visitBinaryOp(const BinaryOpNode& node) override
@@ -346,16 +400,34 @@ public:
         node.setType(ValueType::Invalid);
     }
 
+    void visitUnaryOp(const UnaryOpNode& node) override
+    {
+        if (const ExprNode* operand = node.operand())
+            operand->accept(*this);
+
+        const ExprNode* operand = node.operand();
+        ValueType operandType = operand ? operand->type() : ValueType::Invalid;
+        if (operandType != ValueType::Bool)
+        {
+            addError("Logical not operator requires bool operand");
+            node.setType(ValueType::Invalid);
+            return;
+        }
+
+        node.setType(ValueType::Bool);
+    }
+
     void visitID(const IDNode& node) override
     {
-        auto it = m_symbols.find(node.name());
-        if (it == m_symbols.end())
+        SymbolID symbolId = resolveSymbol(node.name());
+        if (symbolId == InvalidSymbolID)
         {
             addError("Use of undeclared variable '" + node.name() + "'");
             node.setType(ValueType::Invalid);
             return;
         }
-        node.setType(it->second.type);
+        node.setSymbolId(symbolId);
+        node.setType(m_symbols[symbolId].type);
     }
 
     void visitNumber(const NumberNode& node) override
@@ -373,87 +445,120 @@ public:
     }
 
 private:
-    void addError(const std::string& message)
+    void enterScope(size_t scopeId)
+    {
+        m_scopeStack.push_back(scopeId);
+        m_scopeSymbols.try_emplace(scopeId, std::unordered_map<string, SymbolID>{});
+    }
+
+    void exitScope()
+    {
+        if (!m_scopeStack.empty())
+            m_scopeStack.pop_back();
+    }
+
+    size_t currentScopeId() const
+    {
+        return m_scopeStack.empty() ? 0 : m_scopeStack.back();
+    }
+
+    SymbolID resolveSymbol(const string& name) const
+    {
+        for (auto it = m_scopeStack.rbegin(); it != m_scopeStack.rend(); ++it)
+        {
+            auto scopeIt = m_scopeSymbols.find(*it);
+            if (scopeIt == m_scopeSymbols.end())
+                continue;
+
+            auto symIt = scopeIt->second.find(name);
+            if (symIt != scopeIt->second.end())
+                return symIt->second;
+        }
+        return InvalidSymbolID;
+    }
+
+    void addError(const string& message)
     {
         m_errors.push_back(message);
     }
 
-    void addWarning(const std::string& message)
+    void addWarning(const string& message)
     {
         m_warnings.push_back(message);
     }
 
-    std::unordered_map<std::string, VariableInfo> m_symbols;
-    std::vector<std::string> m_errors;
-    std::vector<std::string> m_warnings;
+    std::unordered_map<SymbolID, VariableInfo> m_symbols;
+    std::unordered_map<size_t, std::unordered_map<string, SymbolID>> m_scopeSymbols;
+    std::vector<size_t> m_scopeStack;
+    SymbolID m_nextSymbolId = 0;
+    std::vector<string> m_errors;
+    std::vector<string> m_warnings;
     bool m_returnSeen = false;
 };
 
 struct CodegenValue
 {
-    std::string operand;
+    string operand;
     ValueType type;
 };
 
 struct CodegenVariable
 {
-    ValueType type;
-    bool isMutable;
+    ValueType type = ValueType::Invalid;
+    bool isMutable = false;
     bool allocated = false;
-    std::string pointer;
+    bool initialized = false;
+    string pointer;
 };
 
 class CodeGenerator : public ASTVisitor
 {
 public:
-    CodeGenerator(IRContext& ctx, const std::unordered_map<std::string, VariableInfo>& symbols)
+    CodeGenerator(IRContext& ctx, const std::unordered_map<SymbolID, VariableInfo>& symbols)
         : m_ctx(ctx)
     {
-        for (const auto& [name, info] : symbols)
+        for (const auto& [id, info] : symbols)
         {
             CodegenVariable var;
             var.type = info.type;
             var.isMutable = info.isMutable;
-            var.pointer = "%" + name;
-            m_variables.emplace(name, var);
+            var.pointer = "%" + info.name + "." + std::to_string(id);
+            m_variables.emplace(id, std::move(var));
         }
     }
 
     void generate(const ProgramNode& program)
     {
+        m_currentBlockTerminated = false;
         program.accept(*this);
+        if (!m_currentBlockTerminated)
+            emitReturn({"0", ValueType::I32});
     }
 
     void visitProgram(const ProgramNode& node) override
     {
         for (const auto& stmt : node.statements())
         {
+            if (m_currentBlockTerminated)
+                break;
             if (stmt)
                 stmt->accept(*this);
         }
+    }
 
-        if (const auto* ret = node.returnStmt())
-        {
-            ret->accept(*this);
-        }
-        else
-        {
-            emitReturn({"0", ValueType::I32});
-        }
+    void visitBlock(const BlockNode& node) override
+    {
+        generateBlock(node, "");
     }
 
     void visitDecl(const DeclNode& node) override
     {
-        auto it = m_variables.find(node.identifier());
-        if (it == m_variables.end())
+        SymbolID symbolId = node.symbolId();
+        if (symbolId == InvalidSymbolID)
             return;
 
-        CodegenVariable& var = it->second;
-        if (!var.allocated)
-        {
-            m_ctx.ir << "  " << var.pointer << " = alloca " << llvmType(var.type) << "\n";
-            var.allocated = true;
-        }
+        CodegenVariable& var = getVariable(symbolId);
+        ensureAllocated(var);
 
         CodegenValue value{zeroLiteral(var.type), var.type};
         if (const ExprNode* init = node.initializer())
@@ -468,16 +573,12 @@ public:
 
     void visitAssign(const AssignNode& node) override
     {
-        auto it = m_variables.find(node.identifier());
-        if (it == m_variables.end())
+        SymbolID symbolId = node.symbolId();
+        if (symbolId == InvalidSymbolID)
             return;
 
-        CodegenVariable& var = it->second;
-        if (!var.allocated)
-        {
-            m_ctx.ir << "  " << var.pointer << " = alloca " << llvmType(var.type) << "\n";
-            var.allocated = true;
-        }
+        CodegenVariable& var = getVariable(symbolId);
+        ensureAllocated(var);
 
         if (const ExprNode* valueExpr = node.value())
         {
@@ -486,6 +587,43 @@ public:
             value = ensureType(std::move(value), var.type);
             storeValue(var, value);
         }
+    }
+
+    void visitIf(const IfNode& node) override
+    {
+        if (!node.condition() || !node.thenBlock())
+            return;
+
+        node.condition()->accept(*this);
+        CodegenValue condValue = popValue();
+        condValue = ensureType(std::move(condValue), ValueType::Bool);
+
+        string thenLabel = nextLabel("then");
+        string endLabel = nextLabel("endif");
+        bool hasElse = node.elseBlock() != nullptr;
+        string elseLabel = hasElse ? nextLabel("else") : "";
+
+        string falseLabel = hasElse ? elseLabel : endLabel;
+
+        emitInstruction("br i1 " + condValue.operand + ", label %" + thenLabel + ", label %" + falseLabel);
+        m_currentBlockTerminated = true;
+
+        emitLabel(thenLabel);
+        bool thenFallsThrough = generateBlock(*node.thenBlock(), endLabel);
+
+        bool elseFallsThrough = false;
+        if (hasElse)
+        {
+            emitLabel(elseLabel);
+            elseFallsThrough = generateBlock(*node.elseBlock(), endLabel);
+        }
+
+        emitLabel(endLabel);
+
+        if (hasElse && !thenFallsThrough && !elseFallsThrough)
+            m_currentBlockTerminated = true;
+        else
+            m_currentBlockTerminated = false;
     }
 
     void visitReturn(const ReturnNode& node) override
@@ -520,9 +658,9 @@ public:
 
                 const char* opInstr = (node.op() == BinaryOpNode::Operator::Add) ? "add" :
                                       (node.op() == BinaryOpNode::Operator::Sub) ? "sub" : "mul";
-                std::string tmp = nextTemp();
-                m_ctx.ir << "  " << tmp << " = " << opInstr << " " << llvmType(targetType) << " "
-                         << leftValue.operand << ", " << rightValue.operand << "\n";
+                string tmp = nextTemp();
+                emitInstruction(tmp + " = " + opInstr + " " + llvmType(targetType) + " " +
+                                leftValue.operand + ", " + rightValue.operand);
                 pushValue({tmp, targetType});
                 return;
             }
@@ -534,9 +672,9 @@ public:
                 rightValue = ensureType(std::move(rightValue), operandType);
 
                 const char* cmp = (node.op() == BinaryOpNode::Operator::Equal) ? "icmp eq" : "icmp ne";
-                std::string tmp = nextTemp();
-                m_ctx.ir << "  " << tmp << " = " << cmp << " " << llvmType(operandType) << " "
-                         << leftValue.operand << ", " << rightValue.operand << "\n";
+                string tmp = nextTemp();
+                emitInstruction(tmp + " = " + cmp + " " + llvmType(operandType) + " " +
+                                leftValue.operand + ", " + rightValue.operand);
                 pushValue({tmp, ValueType::Bool});
                 return;
             }
@@ -545,26 +683,35 @@ public:
         pushValue({zeroLiteral(ValueType::Invalid), ValueType::Invalid});
     }
 
+    void visitUnaryOp(const UnaryOpNode& node) override
+    {
+        if (const ExprNode* operand = node.operand())
+            operand->accept(*this);
+
+        CodegenValue value = popValue();
+        value = ensureType(std::move(value), ValueType::Bool);
+        string tmp = nextTemp();
+        emitInstruction(tmp + " = xor i1 " + value.operand + ", 1");
+        pushValue({tmp, ValueType::Bool});
+    }
+
     void visitID(const IDNode& node) override
     {
-        auto it = m_variables.find(node.name());
-        if (it == m_variables.end())
+        SymbolID symbolId = node.symbolId();
+        if (symbolId == InvalidSymbolID)
         {
             pushValue({"0", ValueType::Invalid});
             return;
         }
 
-        CodegenVariable& var = it->second;
-        if (!var.allocated)
-        {
-            m_ctx.ir << "  " << var.pointer << " = alloca " << llvmType(var.type) << "\n";
-            var.allocated = true;
+        CodegenVariable& var = getVariable(symbolId);
+        ensureAllocated(var);
+        if (!var.initialized)
             storeValue(var, {zeroLiteral(var.type), var.type});
-        }
 
-        std::string tmp = nextTemp();
-        m_ctx.ir << "  " << tmp << " = load " << llvmType(var.type) << ", "
-                 << llvmType(var.type) << "* " << var.pointer << "\n";
+        string tmp = nextTemp();
+        emitInstruction(tmp + " = load " + llvmType(var.type) + ", " +
+                        llvmType(var.type) + "* " + var.pointer);
         pushValue({tmp, var.type});
     }
 
@@ -591,7 +738,7 @@ public:
     }
 
 private:
-    std::string llvmType(ValueType type) const
+    string llvmType(ValueType type) const
     {
         switch (type)
         {
@@ -602,7 +749,7 @@ private:
         }
     }
 
-    std::string zeroLiteral(ValueType type) const
+    string zeroLiteral(ValueType type) const
     {
         switch (type)
         {
@@ -615,9 +762,24 @@ private:
         }
     }
 
-    std::string nextTemp()
+    string nextTemp()
     {
         return "%t" + std::to_string(m_ctx.tempId++);
+    }
+
+    string nextLabel(const string& base)
+    {
+        return base + std::to_string(m_labelId++);
+    }
+
+    void emitLabel(const string& label)
+    {
+        m_ctx.ir << label << ":\n";
+    }
+
+    void emitInstruction(const string& text)
+    {
+        m_ctx.ir << "  " << text << "\n";
     }
 
     void pushValue(CodegenValue value)
@@ -634,6 +796,26 @@ private:
         return value;
     }
 
+    CodegenVariable& getVariable(SymbolID id)
+    {
+        auto it = m_variables.find(id);
+        if (it == m_variables.end())
+            it = m_variables.emplace(id, CodegenVariable{}).first;
+        CodegenVariable& var = it->second;
+        if (var.pointer.empty())
+            var.pointer = "%tmpvar." + std::to_string(id);
+        return var;
+    }
+
+    void ensureAllocated(CodegenVariable& var)
+    {
+        if (!var.allocated && !var.pointer.empty())
+        {
+            emitInstruction(var.pointer + " = alloca " + llvmType(var.type));
+            var.allocated = true;
+        }
+    }
+
     CodegenValue ensureType(CodegenValue value, ValueType target)
     {
         if (target == ValueType::Invalid || value.type == ValueType::Invalid)
@@ -644,15 +826,22 @@ private:
 
         if (target == ValueType::I64 && value.type == ValueType::I32)
         {
-            std::string tmp = nextTemp();
-            m_ctx.ir << "  " << tmp << " = sext i32 " << value.operand << " to i64\n";
+            string tmp = nextTemp();
+            emitInstruction(tmp + " = sext i32 " + value.operand + " to i64");
             return {tmp, ValueType::I64};
+        }
+
+        if (target == ValueType::I32 && value.type == ValueType::I64)
+        {
+            string tmp = nextTemp();
+            emitInstruction(tmp + " = trunc i64 " + value.operand + " to i32");
+            return {tmp, ValueType::I32};
         }
 
         if (target == ValueType::I32 && value.type == ValueType::Bool)
         {
-            std::string tmp = nextTemp();
-            m_ctx.ir << "  " << tmp << " = zext i1 " << value.operand << " to i32\n";
+            string tmp = nextTemp();
+            emitInstruction(tmp + " = zext i1 " + value.operand + " to i32");
             return {tmp, ValueType::I32};
         }
 
@@ -662,26 +851,56 @@ private:
             return ensureType(std::move(widened), ValueType::I64);
         }
 
+        if (target == ValueType::Bool && value.type != ValueType::Bool)
+            return {value.operand, ValueType::Invalid};
+
         return value;
     }
 
-    void storeValue(const CodegenVariable& var, const CodegenValue& value)
+    void storeValue(CodegenVariable& var, const CodegenValue& value)
     {
-        m_ctx.ir << "  store " << llvmType(var.type) << " " << value.operand
-                 << ", " << llvmType(var.type) << "* " << var.pointer << "\n";
+        ensureAllocated(var);
+        emitInstruction("store " + llvmType(var.type) + " " + value.operand + ", " +
+                        llvmType(var.type) + "* " + var.pointer);
+        var.initialized = true;
     }
 
     void emitReturn(CodegenValue value)
     {
         value = ensureType(std::move(value), ValueType::I32);
-        m_ctx.ir << "  %fmtptr = getelementptr [29 x i8], [29 x i8]* @fmt, i32 0, i32 0\n";
-        m_ctx.ir << "  call i32 (i8*, ...) @printf(i8* %fmtptr, i32 " << value.operand << ")\n";
-        m_ctx.ir << "  ret i32 " << value.operand << "\n";
+        string fmtPtr = nextTemp();
+        emitInstruction(fmtPtr + " = getelementptr [29 x i8], [29 x i8]* @fmt, i32 0, i32 0");
+        emitInstruction("call i32 (i8*, ...) @printf(i8* " + fmtPtr + ", i32 " + value.operand + ")");
+        emitInstruction("ret i32 " + value.operand);
+        m_currentBlockTerminated = true;
+    }
+
+    bool generateBlock(const BlockNode& node, const string& exitLabel)
+    {
+        bool savedTerminated = m_currentBlockTerminated;
+        m_currentBlockTerminated = false;
+
+        for (const auto& stmt : node.statements())
+        {
+            if (m_currentBlockTerminated)
+                break;
+            if (stmt)
+                stmt->accept(*this);
+        }
+
+        bool fallsThrough = !m_currentBlockTerminated;
+        if (fallsThrough && !exitLabel.empty())
+            emitInstruction("br label %" + exitLabel);
+
+        m_currentBlockTerminated = savedTerminated;
+        return fallsThrough;
     }
 
     IRContext& m_ctx;
-    std::unordered_map<std::string, CodegenVariable> m_variables;
+    std::unordered_map<SymbolID, CodegenVariable> m_variables;
     std::vector<CodegenValue> m_stack;
+    int m_labelId = 0;
+    bool m_currentBlockTerminated = false;
 };
 
 int main(int argc, char** argv)
