@@ -34,6 +34,8 @@ public:
     /// Parse either a declaration or assignment depending on current token.
     std::unique_ptr<DeclNode> parseDecl();
     std::unique_ptr<AssignNode> parseAssign();
+    std::unique_ptr<StructDeclNode> parseStructDecl();
+    std::unique_ptr<FunctionNode> parseFunction();
 
     /// Parse expressions and sub-components.
     std::unique_ptr<ExprNode> parseExpr();
@@ -55,7 +57,7 @@ private:
     bool expect(TokenType type, const std::string& message);
 
     void skipNewlines();
-    ValueType parseType();
+    TypeDesc parseType();
     size_t allocateScopeId();
 
     void addError(const std::string& message);
@@ -64,4 +66,6 @@ private:
     size_t m_index = 0;
     std::vector<std::string> m_errors;
     size_t m_nextScopeId = 1;
+    // Parsed struct names available for type recognition
+    std::vector<std::string> m_knownStructs;
 };

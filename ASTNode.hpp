@@ -18,6 +18,8 @@ class NumberNode;
 class BoolLiteralNode;
 class BinaryOpNode;
 class UnaryOpNode;
+class StructDeclNode;
+class FunctionNode;
 
 enum class ValueType
 {
@@ -25,6 +27,31 @@ enum class ValueType
 	I32,
 	I64,
 	Bool
+};
+
+struct TypeDesc
+{
+	enum class Kind { Builtin, Struct };
+
+	Kind kind = Kind::Builtin;
+	ValueType builtin = ValueType::Invalid;
+	std::string structName;
+
+	static TypeDesc Builtin(ValueType t)
+	{
+		TypeDesc d;
+		d.kind = Kind::Builtin;
+		d.builtin = t;
+		return d;
+	}
+
+	static TypeDesc Struct(std::string name)
+	{
+		TypeDesc d;
+		d.kind = Kind::Struct;
+		d.structName = std::move(name);
+		return d;
+	}
 };
 
 using SymbolID = size_t;
@@ -46,6 +73,8 @@ public:
 	virtual void visitID(const IDNode& node) = 0;
 	virtual void visitNumber(const NumberNode& node) = 0;
 	virtual void visitBoolLiteral(const BoolLiteralNode& node) = 0;
+	virtual void visitStructDecl(const StructDeclNode& node) = 0;
+    virtual void visitFunction(const FunctionNode& node) = 0;
 };
 
 class ASTNode
@@ -212,30 +241,30 @@ private:
 class DeclNode : public StmtNode
 {
 public:
-	DeclNode(ValueType type,
+	DeclNode(TypeDesc type,
 			std::string identifier,
 			bool isMutable,
-			std::unique_ptr<ExprNode> initializer)
-	    : m_type(type),
-	      m_identifier(std::move(identifier)),
-	      m_isMutable(isMutable),
-	      m_initializer(std::move(initializer)) {}
+			std::vector<std::unique_ptr<ExprNode>> initializers)
+		: m_type(std::move(type)),
+		  m_identifier(std::move(identifier)),
+		  m_isMutable(isMutable),
+		  m_initializers(std::move(initializers)) {}
 
-	ValueType declaredType() const { return m_type; }
+	const TypeDesc& declaredType() const { return m_type; }
 	const std::string& identifier() const { return m_identifier; }
 	bool isMutable() const { return m_isMutable; }
-	bool hasInitializer() const { return static_cast<bool>(m_initializer); }
-	const ExprNode* initializer() const { return m_initializer.get(); }
+	bool hasInitializer() const { return !m_initializers.empty(); }
+	const std::vector<std::unique_ptr<ExprNode>>& initializers() const { return m_initializers; }
 	SymbolID symbolId() const { return m_symbolId; }
 	void setSymbolId(SymbolID id) const { m_symbolId = id; }
 
 	void accept(ASTVisitor& visitor) const override { visitor.visitDecl(*this); }
 
 private:
-	ValueType m_type;
+	TypeDesc m_type;
 	std::string m_identifier;
 	bool m_isMutable;
-	std::unique_ptr<ExprNode> m_initializer;
+	std::vector<std::unique_ptr<ExprNode>> m_initializers;
 	mutable SymbolID m_symbolId = InvalidSymbolID;
 };
 
@@ -292,4 +321,64 @@ public:
 
 private:
 	std::unique_ptr<ExprNode> m_expr;
+};
+
+class StructDeclNode : public StmtNode
+{
+public:
+	struct Field
+	{
+		TypeDesc type;
+		std::string name;
+		bool isMutable = false;
+	};
+
+	StructDeclNode(std::string name, std::vector<Field> fields)
+		: m_name(std::move(name)), m_fields(std::move(fields)) {}
+
+	const std::string& name() const { return m_name; }
+	const std::vector<Field>& fields() const { return m_fields; }
+
+	void accept(ASTVisitor& visitor) const override { visitor.visitStructDecl(*this); }
+
+private:
+	std::string m_name;
+	std::vector<Field> m_fields;
+};
+
+class FunctionNode : public StmtNode
+{
+public:
+	struct Param
+	{
+		TypeDesc type;
+		std::string name;
+		mutable SymbolID symbolId = InvalidSymbolID;
+	};
+
+	FunctionNode(std::string name,
+				 std::vector<Param> params,
+				 TypeDesc returnType,
+				 std::unique_ptr<BlockNode> body,
+				 size_t scopeId)
+		: m_name(std::move(name)),
+		  m_params(std::move(params)),
+		  m_returnType(std::move(returnType)),
+		  m_body(std::move(body)),
+		  m_scopeId(scopeId) {}
+
+	const std::string& name() const { return m_name; }
+	const std::vector<Param>& params() const { return m_params; }
+	const TypeDesc& returnType() const { return m_returnType; }
+	const BlockNode* body() const { return m_body.get(); }
+	size_t scopeId() const { return m_scopeId; }
+
+	void accept(ASTVisitor& visitor) const override { visitor.visitFunction(*this); }
+
+private:
+	std::string m_name;
+	std::vector<Param> m_params;
+	TypeDesc m_returnType;
+	std::unique_ptr<BlockNode> m_body;
+	size_t m_scopeId;
 };

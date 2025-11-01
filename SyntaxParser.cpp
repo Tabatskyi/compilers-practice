@@ -52,13 +52,26 @@ std::unique_ptr<StmtNode> SyntaxParser::parseStmt()
 
     switch (token->type)
     {
+        case TokenType::Struct:
+            return parseStructDecl();
+        case TokenType::Fn:
+            return parseFunction();
         case TokenType::I32:
         case TokenType::I64:
         case TokenType::Bool:
             return parseDecl();
 
         case TokenType::Identifier:
+        {
+            // Could be a declaration of a struct-typed variable or an assignment
+            std::string name = token->lexeme;
+            for (const auto& s : m_knownStructs)
+            {
+                if (s == name)
+                    return parseDecl();
+            }
             return parseAssign();
+        }
 
         case TokenType::Return:
             return parseReturn();
@@ -150,8 +163,8 @@ std::unique_ptr<BlockNode> SyntaxParser::parseBlock(size_t scopeId)
 
 std::unique_ptr<DeclNode> SyntaxParser::parseDecl()
 {
-    ValueType type = parseType();
-    if (type == ValueType::Invalid)
+    TypeDesc type = parseType();
+    if (type.kind == TypeDesc::Kind::Builtin && type.builtin == ValueType::Invalid)
         return nullptr;
 
     skipNewlines();
@@ -174,48 +187,89 @@ std::unique_ptr<DeclNode> SyntaxParser::parseDecl()
 
     skipNewlines();
 
-    std::unique_ptr<ExprNode> initializer;
+    std::vector<std::unique_ptr<ExprNode>> initializers;
     if (match(TokenType::BlockStart))
     {
         skipNewlines();
-        initializer = parseExpr();
-        if (!initializer)
-            return nullptr;
+        if (type.kind == TypeDesc::Kind::Struct)
+        {
+            // Parse comma-separated initializer list for struct
+            if (peek() && peek()->type != TokenType::BlockEnd)
+            {
+                while (true)
+                {
+                    auto expr = parseExpr();
+                    if (!expr)
+                        return nullptr;
+                    initializers.push_back(std::move(expr));
+                    skipNewlines();
+                    if (match(TokenType::Comma))
+                    {
+                        skipNewlines();
+                        continue;
+                    }
+                    break;
+                }
+            }
+        }
+        else
+        {
+            auto expr = parseExpr();
+            if (!expr)
+                return nullptr;
+            initializers.push_back(std::move(expr));
+        }
 
         skipNewlines();
         if (!expect(TokenType::BlockEnd, "Expected '}' after initializer expression"))
             return nullptr;
     }
 
-    return std::make_unique<DeclNode>(type, std::move(identifier), isMutable, std::move(initializer));
+    return std::make_unique<DeclNode>(type, std::move(identifier), isMutable, std::move(initializers));
 }
 
-ValueType SyntaxParser::parseType()
+TypeDesc SyntaxParser::parseType()
 {
     const Token* token = peek();
     if (!token)
     {
         addError("Expected type specifier");
-        return ValueType::Invalid;
+        return TypeDesc::Builtin(ValueType::Invalid);
     }
 
     switch (token->type)
     {
         case TokenType::I32:
             eat();
-            return ValueType::I32;
+            return TypeDesc::Builtin(ValueType::I32);
 
         case TokenType::I64:
             eat();
-            return ValueType::I64;
+            return TypeDesc::Builtin(ValueType::I64);
 
         case TokenType::Bool:
             eat();
-            return ValueType::Bool;
+            return TypeDesc::Builtin(ValueType::Bool);
+
+        case TokenType::Identifier:
+        {
+            // Allow previously-declared struct names as types
+            std::string name = token->lexeme;
+            for (const auto& s : m_knownStructs)
+            {
+                if (s == name)
+                {
+                    eat();
+                    return TypeDesc::Struct(name);
+                }
+            }
+            addError("Unknown type '" + token->lexeme + "'");
+            return TypeDesc::Builtin(ValueType::Invalid);
+        }
 
         default:
             addError("Expected type specifier");
-            return ValueType::Invalid;
+            return TypeDesc::Builtin(ValueType::Invalid);
     }
 }
 
@@ -392,6 +446,139 @@ std::unique_ptr<ExprNode> SyntaxParser::parsePrimary()
             addError("Unexpected token '" + token->lexeme + "' in expression");
             return nullptr;
     }
+}
+
+std::unique_ptr<StructDeclNode> SyntaxParser::parseStructDecl()
+{
+    if (!expect(TokenType::Struct, "Expected 'struct'"))
+        return nullptr;
+
+    const Token* nameTok = peek();
+    if (!nameTok || nameTok->type != TokenType::Identifier)
+    {
+        addError("Expected struct name after 'struct'");
+        return nullptr;
+    }
+    std::string structName = nameTok->lexeme;
+    eat();
+
+    if (!expect(TokenType::BlockStart, "Expected '{' to start struct body"))
+        return nullptr;
+
+    std::vector<StructDeclNode::Field> fields;
+    skipNewlines();
+    while (true)
+    {
+        const Token* t = peek();
+        if (!t)
+        {
+            addError("Unexpected end of input inside struct body");
+            return nullptr;
+        }
+        if (t->type == TokenType::BlockEnd)
+        {
+            eat();
+            break;
+        }
+
+        TypeDesc fieldType = parseType();
+        if (fieldType.kind == TypeDesc::Kind::Builtin && fieldType.builtin == ValueType::Invalid)
+            return nullptr;
+        skipNewlines();
+
+        bool isMutable = false;
+        while (match(TokenType::Mut))
+        {
+            isMutable = true;
+            skipNewlines();
+        }
+
+        const Token* fieldNameTok = peek();
+        if (!fieldNameTok || fieldNameTok->type != TokenType::Identifier)
+        {
+            addError("Expected field name in struct body");
+            return nullptr;
+        }
+        std::string fieldName = fieldNameTok->lexeme;
+        eat();
+        skipNewlines();
+
+        fields.push_back(StructDeclNode::Field{std::move(fieldType), std::move(fieldName), isMutable});
+    }
+
+    m_knownStructs.push_back(structName);
+
+    return std::make_unique<StructDeclNode>(std::move(structName), std::move(fields));
+}
+
+std::unique_ptr<FunctionNode> SyntaxParser::parseFunction()
+{
+    if (!expect(TokenType::Fn, "Expected 'fn'"))
+        return nullptr;
+
+    const Token* nameTok = peek();
+    if (!nameTok || nameTok->type != TokenType::Identifier)
+    {
+        addError("Expected function name after 'fn'");
+        return nullptr;
+    }
+    std::string funcName = nameTok->lexeme;
+    eat();
+
+    if (!expect(TokenType::Assign, "Expected '=' after function name"))
+        return nullptr;
+
+    if (!expect(TokenType::LParen, "Expected '(' after '=' in function declaration"))
+        return nullptr;
+
+    std::vector<FunctionNode::Param> params;
+    skipNewlines();
+    if (peek() && peek()->type != TokenType::RParen)
+    {
+        while (true)
+        {
+            TypeDesc pType = parseType();
+            if (pType.kind == TypeDesc::Kind::Builtin && pType.builtin == ValueType::Invalid)
+                return nullptr;
+            skipNewlines();
+
+            const Token* paramNameTok = peek();
+            if (!paramNameTok || paramNameTok->type != TokenType::Identifier)
+            {
+                addError("Expected parameter name");
+                return nullptr;
+            }
+            std::string pName = paramNameTok->lexeme;
+            eat();
+
+            params.push_back(FunctionNode::Param{std::move(pType), std::move(pName), InvalidSymbolID});
+
+            skipNewlines();
+            if (match(TokenType::Comma))
+            {
+                skipNewlines();
+                continue;
+            }
+            break;
+        }
+    }
+
+    if (!expect(TokenType::RParen, "Expected ')' after parameter list"))
+        return nullptr;
+
+    if (!expect(TokenType::Arrow, "Expected '->' after parameter list"))
+        return nullptr;
+
+    TypeDesc retType = parseType();
+    if (retType.kind == TypeDesc::Kind::Builtin && retType.builtin == ValueType::Invalid)
+        return nullptr;
+
+    skipNewlines();
+    auto body = parseBlock(allocateScopeId());
+    if (!body)
+        return nullptr;
+
+    return std::make_unique<FunctionNode>(std::move(funcName), std::move(params), std::move(retType), std::move(body), body->scopeId());
 }
 
 bool SyntaxParser::atEnd() const
