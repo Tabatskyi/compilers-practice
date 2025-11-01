@@ -25,6 +25,7 @@ enum class TokenType
     BlockEnd,
     LParen,
     RParen,
+    Dot,
     Comma,
     Assign,
     Arrow,

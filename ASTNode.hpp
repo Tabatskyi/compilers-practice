@@ -21,6 +21,8 @@ class BinaryOpNode;
 class UnaryOpNode;
 class StructDeclNode;
 class FunctionNode;
+class FieldAccessNode;
+class FunctionCallNode;
 
 enum class ValueType
 {
@@ -75,7 +77,10 @@ public:
 	virtual void visitNumber(const NumberNode& node) = 0;
 	virtual void visitBoolLiteral(const BoolLiteralNode& node) = 0;
 	virtual void visitStructDecl(const StructDeclNode& node) = 0;
-    virtual void visitFunction(const FunctionNode& node) = 0;
+	virtual void visitFunction(const FunctionNode& node) = 0;
+	virtual void visitAssignField(const class AssignFieldNode& node) = 0;
+	virtual void visitFieldAccess(const FieldAccessNode& node) = 0;
+	virtual void visitFunctionCall(const FunctionCallNode& node) = 0;
 };
 
 class ASTNode
@@ -285,6 +290,57 @@ private:
 	std::string targetName;
 	std::unique_ptr<ExprNode> assignedValue;
 	mutable SymbolID symId = InvalidSymbolID;
+};
+
+class FieldAccessNode : public FactorNode
+{
+public:
+	FieldAccessNode(std::string base, std::vector<std::string> chain)
+		: baseName(std::move(base)), fields(std::move(chain)) {}
+
+	const std::string& base() const { return baseName; }
+	const std::vector<std::string>& fieldChain() const { return fields; }
+	SymbolID baseSymbolId() const { return baseId; }
+	void setBaseSymbolId(SymbolID id) const { baseId = id; }
+
+	void accept(ASTVisitor& visitor) const override { visitor.visitFieldAccess(*this); }
+
+private:
+	std::string baseName;
+	std::vector<std::string> fields;
+	mutable SymbolID baseId = InvalidSymbolID;
+};
+
+class AssignFieldNode : public StmtNode
+{
+public:
+	AssignFieldNode(std::unique_ptr<FieldAccessNode> target, std::unique_ptr<ExprNode> value)
+		: lhs(std::move(target)), rhs(std::move(value)) {}
+
+	const FieldAccessNode* target() const { return lhs.get(); }
+	const ExprNode* value() const { return rhs.get(); }
+
+	void accept(ASTVisitor& visitor) const override { visitor.visitAssignField(*this); }
+
+private:
+	std::unique_ptr<FieldAccessNode> lhs;
+	std::unique_ptr<ExprNode> rhs;
+};
+
+class FunctionCallNode : public FactorNode
+{
+public:
+	FunctionCallNode(std::string name, std::vector<std::unique_ptr<ExprNode>> args)
+		: funcName(std::move(name)), arguments(std::move(args)) {}
+
+	const std::string& name() const { return funcName; }
+	const std::vector<std::unique_ptr<ExprNode>>& args() const { return arguments; }
+
+	void accept(ASTVisitor& visitor) const override { visitor.visitFunctionCall(*this); }
+
+private:
+	std::string funcName;
+	std::vector<std::unique_ptr<ExprNode>> arguments;
 };
 
 class IfNode : public StmtNode

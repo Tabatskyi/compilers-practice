@@ -23,18 +23,29 @@ std::unique_ptr<ProgramNode> SyntaxParser::parseProgram()
 
     skipNewlines();
 
-    while (!atEnd())
+    while (peek() && peek()->type == TokenType::Struct)
     {
-        auto stmt = parseStmt();
-        if (!stmt)
-            return nullptr;
-
-        statements.push_back(std::move(stmt));
+        auto sd = parseStructDecl();
+        if (!sd) return nullptr;
+        statements.push_back(std::move(sd));
         skipNewlines();
     }
 
-    if (!atEnd())
-        addError("Unexpected tokens after program body");
+    while (peek() && peek()->type == TokenType::Fn)
+    {
+        auto fn = parseFunction();
+        if (!fn) return nullptr;
+        statements.push_back(std::move(fn));
+        skipNewlines();
+    }
+
+    while (!atEnd())
+    {
+        auto stmt = parseStmt();
+        if (!stmt) return nullptr;
+        statements.push_back(std::move(stmt));
+        skipNewlines();
+    }
 
     return std::make_unique<ProgramNode>(std::move(statements), 0);
 }
@@ -270,7 +281,7 @@ TypeDesc SyntaxParser::parseType()
     }
 }
 
-std::unique_ptr<AssignNode> SyntaxParser::parseAssign()
+std::unique_ptr<StmtNode> SyntaxParser::parseAssign()
 {
     const Token* identTok = peek();
     if (!identTok || identTok->type != TokenType::Identifier)
@@ -282,7 +293,20 @@ std::unique_ptr<AssignNode> SyntaxParser::parseAssign()
     std::string identifier = identTok->lexeme;
     eat();
 
+    std::vector<std::string> chain;
     skipNewlines();
+    while (match(TokenType::Dot))
+    {
+        const Token* f = peek();
+        if (!f || f->type != TokenType::Identifier)
+        {
+            addError("Expected field name after '.'");
+            return nullptr;
+        }
+        chain.push_back(f->lexeme);
+        eat();
+        skipNewlines();
+    }
 
     if (!expect(TokenType::Assign, "Expected '=' in assignment"))
         return nullptr;
@@ -292,6 +316,12 @@ std::unique_ptr<AssignNode> SyntaxParser::parseAssign()
     auto value = parseExpr();
     if (!value)
         return nullptr;
+
+    if (!chain.empty())
+    {
+        auto target = std::make_unique<FieldAccessNode>(std::move(identifier), std::move(chain));
+        return std::make_unique<AssignFieldNode>(std::move(target), std::move(value));
+    }
 
     return std::make_unique<AssignNode>(std::move(identifier), std::move(value));
 }
@@ -421,16 +451,51 @@ std::unique_ptr<ExprNode> SyntaxParser::parsePrimary()
         {
             std::string name = token->lexeme;
             eat();
+            if (match(TokenType::LParen))
+            {
+                std::vector<std::unique_ptr<ExprNode>> args;
+                skipNewlines();
+                if (peek() && peek()->type != TokenType::RParen)
+                {
+                    while (true)
+                    {
+                        auto arg = parseExpr();
+                        if (!arg) return nullptr;
+                        args.push_back(std::move(arg));
+                        skipNewlines();
+                        if (match(TokenType::Comma)) { skipNewlines(); continue; }
+                        break;
+                    }
+                }
+                if (!expect(TokenType::RParen, "Expected ')' after arguments"))
+                    return nullptr;
+                return std::make_unique<FunctionCallNode>(std::move(name), std::move(args));
+            }
+
+            if (peek() && peek()->type == TokenType::Dot)
+            {
+                std::vector<std::string> chain;
+                while (match(TokenType::Dot))
+                {
+                    const Token* f = peek();
+                    if (!f || f->type != TokenType::Identifier)
+                    {
+                        addError("Expected field name after '.'");
+                        return nullptr;
+                    }
+                    chain.push_back(f->lexeme);
+                    eat();
+                }
+                return std::make_unique<FieldAccessNode>(std::move(name), std::move(chain));
+            }
             return std::make_unique<IDNode>(std::move(name));
         }
-
         case TokenType::Number:
         {
             std::int64_t value = std::stoll(token->lexeme);
             eat();
             return std::make_unique<NumberNode>(value);
         }
-
         case TokenType::True:
         case TokenType::False:
         {
@@ -438,7 +503,6 @@ std::unique_ptr<ExprNode> SyntaxParser::parsePrimary()
             eat();
             return std::make_unique<BoolLiteralNode>(value);
         }
-
         default:
             addError("Unexpected token '" + token->lexeme + "' in expression");
             return nullptr;
@@ -459,6 +523,7 @@ std::unique_ptr<StructDeclNode> SyntaxParser::parseStructDecl()
     std::string structName = nameTok->lexeme;
     eat();
 
+    skipNewlines();
     if (!expect(TokenType::BlockStart, "Expected '{' to start struct body"))
         return nullptr;
 

@@ -10,6 +10,7 @@
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -135,6 +136,7 @@ std::vector<Token> lexSource(const string& source)
                     case '}': kind = TokenType::BlockEnd; break;
                     case '(': kind = TokenType::LParen; break;
                     case ')': kind = TokenType::RParen; break;
+                    case '.': kind = TokenType::Dot; break;
                     case ',': kind = TokenType::Comma; break;
                     case '=': kind = TokenType::Assign; break;
                     case '+': kind = TokenType::Add; break;
@@ -251,8 +253,11 @@ public:
     const std::unordered_map<SymbolID, VariableInfo>& symbols() const { return symbolTable; }
     struct StructFieldInfo { TypeDesc type; bool isMutable; string name; };
     struct StructInfo { string name; std::vector<StructFieldInfo> fields; };
-    struct FunctionInfo {
-        string name; TypeDesc returnType; struct Param { TypeDesc type; string name; SymbolID symbolId; }; std::vector<Param> params; size_t scopeId = 0;
+    struct FunctionInfo 
+    {
+        string name; TypeDesc returnType; 
+        struct Param { TypeDesc type; string name; SymbolID symbolId; }; 
+        std::vector<Param> params; size_t scopeId = 0;
     };
     const std::unordered_map<string, StructInfo>& structs() const { return structTable; }
     const std::unordered_map<string, FunctionInfo>& functions() const { return functionTable; }
@@ -295,7 +300,6 @@ public:
             info.params.push_back(FunctionInfo::Param{p.type, p.name, InvalidSymbolID});
         functionTable.emplace(info.name, std::move(info));
 
-        // Declare parameters in function scope
         enterScope(node.scopeId());
         for (const auto& p : node.params())
         {
@@ -308,7 +312,7 @@ public:
             SymbolID symbolId = nextSymbolId++;
             scopeMap.emplace(p.name, symbolId);
             symbolTable.emplace(symbolId, VariableInfo{p.type, false, p.name, currentScopeId()});
-            // update stored function param symbol id
+
             auto fit = functionTable.find(node.name());
             if (fit != functionTable.end())
             {
@@ -323,7 +327,6 @@ public:
             }
         }
 
-        // Analyze body with function return context
         inFunction = true;
         currentFunctionReturn = node.returnType();
         if (node.body())
@@ -617,6 +620,162 @@ public:
         node.setType(ValueType::Bool);
     }
 
+    void visitFieldAccess(const FieldAccessNode& node) override
+    {
+        SymbolID baseId = resolveSymbol(node.base());
+        if (baseId == InvalidSymbolID)
+        {
+            addError("Use of undeclared variable '" + node.base() + "'");
+            return;
+        }
+        node.setBaseSymbolId(baseId);
+        const auto& baseVar = symbolTable[baseId];
+        if (baseVar.type.kind != TypeDesc::Kind::Struct)
+        {
+            addError("Variable '" + node.base() + "' is not a struct");
+            node.setType(ValueType::Invalid);
+            return;
+        }
+        TypeDesc cur = baseVar.type;
+        for (size_t i = 0; i < node.fieldChain().size(); ++i)
+        {
+            auto it = structTable.find(cur.structName);
+            if (it == structTable.end())
+            {
+                addError("Unknown struct type '" + cur.structName + "'");
+                node.setType(ValueType::Invalid);
+                return;
+            }
+            const auto& fields = it->second.fields;
+            const std::string& fname = node.fieldChain()[i];
+            bool found = false;
+            for (const auto& f : fields)
+            {
+                if (f.name == fname)
+                {
+                    cur = f.type;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found)
+            {
+                addError("Struct '" + it->second.name + "' has no field '" + fname + "'");
+                node.setType(ValueType::Invalid);
+                return;
+            }
+        }
+        if (cur.kind == TypeDesc::Kind::Builtin)
+            node.setType(cur.builtin);
+        else
+            node.setType(ValueType::Invalid);
+    }
+
+    void visitAssignField(const AssignFieldNode& node) override
+    {
+        const FieldAccessNode* fieldAccess = node.target();
+        if (!fieldAccess)
+            return;
+
+        visitFieldAccess(*fieldAccess);
+        SymbolID baseId = fieldAccess->baseSymbolId();
+        if (baseId == InvalidSymbolID)
+            return;
+        const auto& baseVar = symbolTable[baseId];
+
+        bool chainMutable = baseVar.isMutable;
+        TypeDesc cur = baseVar.type;
+        for (size_t i = 0; i < fieldAccess->fieldChain().size(); ++i)
+        {
+            auto it = structTable.find(cur.structName);
+            if (it == structTable.end()) { chainMutable = false; break; }
+            const std::string& fname = fieldAccess->fieldChain()[i];
+            bool found = false;
+            for (const auto& f : it->second.fields)
+            {
+                if (f.name == fname)
+                {
+                    if (i < fieldAccess->fieldChain().size() - 1)
+                        chainMutable = chainMutable && f.isMutable;
+                    cur = f.type;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) { chainMutable = false; break; }
+        }
+
+        if (!chainMutable)
+            addError("Field access is immutable");
+
+        if (cur.kind == TypeDesc::Kind::Struct)
+        {
+            addError("Assignment to struct fields is not supported in this task");
+        }
+
+        if (const ExprNode* value = node.value())
+        {
+            value->accept(*this);
+            if (cur.kind == TypeDesc::Kind::Builtin)
+            {
+                if (!isAssignable(cur.builtin, value->type()))
+                    addError("Cannot assign incompatible type to field");
+            }
+        }
+    }
+
+    void visitFunctionCall(const FunctionCallNode& node) override
+    {
+        auto it = functionTable.find(node.name());
+        if (it == functionTable.end())
+        {
+            addError("Call to undeclared function '" + node.name() + "'");
+            return;
+        }
+        const auto& fn = it->second;
+        if (node.args().size() != fn.params.size())
+        {
+            addError("Function '" + node.name() + "' called with wrong number of arguments");
+            return;
+        }
+        for (size_t i = 0; i < node.args().size(); ++i)
+        {
+            const ExprNode* arg = node.args()[i].get();
+            arg->accept(*this);
+            const auto& p = fn.params[i];
+            if (p.type.kind == TypeDesc::Kind::Builtin)
+            {
+                if (!isAssignable(p.type.builtin, arg->type()))
+                    addError("Argument type mismatch at position " + std::to_string(i));
+            }
+            else
+            {
+                const IDNode* id = dynamic_cast<const IDNode*>(arg);
+                if (!id)
+                    addError("Struct argument must be a variable of type '" + p.type.structName + "'");
+                else
+                {
+                    if (id->symbolId() == InvalidSymbolID)
+                        addError("Use of undeclared variable in function call");
+                    else
+                    {
+                        const auto& v = symbolTable[id->symbolId()];
+                        if (v.type.kind != TypeDesc::Kind::Struct || v.type.structName != p.type.structName)
+                            addError("Struct argument type mismatch");
+                    }
+                }
+            }
+        }
+        if (fn.returnType.kind == TypeDesc::Kind::Builtin)
+        {
+            const_cast<FunctionCallNode&>(node).setType(fn.returnType.builtin);
+        }
+        else
+        {
+            const_cast<FunctionCallNode&>(node).setType(ValueType::Invalid);
+        }
+    }
+
 private:
     void enterScope(size_t scopeId)
     {
@@ -733,6 +892,14 @@ public:
         }
     }
 
+    void emitTopLevel(const ProgramNode& program)
+    {
+        emittingTopLevel = true;
+        emittedStructs.clear();
+        program.accept(*this);
+        emittingTopLevel = false;
+    }
+
     void generate(const ProgramNode& program)
     {
         currentBlockTerminated = false;
@@ -799,23 +966,47 @@ public:
 
     void visitProgram(const ProgramNode& node) override
     {
+        if (emittingTopLevel)
+        {
+            for (const auto& stmt : node.statements())
+            {
+                if (!stmt) continue;
+                if (const auto* fn = dynamic_cast<const FunctionNode*>(stmt.get()))
+                {
+                    visitFunction(*fn);
+                    continue;
+                }
+                if (const auto* sd = dynamic_cast<const StructDeclNode*>(stmt.get()))
+                {
+                    visitStructDecl(*sd);
+                    continue;
+                }
+            }
+            return;
+        }
+
         for (const auto& stmt : node.statements())
         {
             if (currentBlockTerminated)
                 break;
-            if (stmt)
-                stmt->accept(*this);
+            if (!stmt)
+                continue;
+            if (dynamic_cast<const FunctionNode*>(stmt.get()) || dynamic_cast<const StructDeclNode*>(stmt.get()))
+                continue;
+            stmt->accept(*this);
         }
     }
-
-    void visitStructDecl(const StructDeclNode& /*node*/) override {}
 
     void visitBlock(const BlockNode& node) override
     {
         generateBlock(node, "");
     }
 
-    void visitFunction(const FunctionNode& /*node*/) override {}
+    void visitFunction(const FunctionNode& node) override
+    {
+        if (emittingTopLevel)
+            generateFunction(node);
+    }
 
     void visitDecl(const DeclNode& node) override
     {
@@ -879,6 +1070,45 @@ public:
         }
     }
 
+    void visitStructDecl(const StructDeclNode& node) override
+    {
+        if (!emittingTopLevel)
+            return;
+        if (emittedStructs.find(node.name()) != emittedStructs.end())
+            return;
+        emittedStructs.insert(node.name());
+
+        auto it = structs.find(node.name());
+        if (it != structs.end())
+        {
+            ctx.ir << "%struct." << node.name() << " = type {";
+            const auto& s = it->second;
+            for (size_t i = 0; i < s.fields.size(); ++i)
+            {
+                if (i > 0) ctx.ir << ", ";
+                const auto& f = s.fields[i];
+                if (f.type.kind == TypeDesc::Kind::Builtin)
+                    ctx.ir << llvmType(f.type.builtin);
+                else
+                    ctx.ir << "%struct." << f.type.structName;
+            }
+            ctx.ir << "}\n";
+            return;
+        }
+
+        ctx.ir << "%struct." << node.name() << " = type {";
+        for (size_t i = 0; i < node.fields().size(); ++i)
+        {
+            if (i > 0) ctx.ir << ", ";
+            const auto& f = node.fields()[i];
+            if (f.type.kind == TypeDesc::Kind::Builtin)
+                ctx.ir << llvmType(f.type.builtin);
+            else
+                ctx.ir << "%struct." << f.type.structName;
+        }
+        ctx.ir << "}\n";
+    }
+
     void visitAssign(const AssignNode& node) override
     {
         SymbolID symbolId = node.symbolId();
@@ -896,6 +1126,96 @@ public:
                 value = ensureType(std::move(value), var.type.builtin);
             storeValue(var, value);
         }
+    }
+
+    void visitAssignField(const AssignFieldNode& node) override
+    {
+        const FieldAccessNode* fieldAccess = node.target();
+        if (!fieldAccess) 
+            return;
+
+        string fieldPtr = getFieldPointer(*fieldAccess);
+        if (fieldPtr.empty()) return;
+        if (const ExprNode* valueExpr = node.value())
+        {
+            valueExpr->accept(*this);
+            CodegenValue value = popValue();
+            TypeDesc ftype = fieldTypeDesc(*fieldAccess);
+            if (ftype.kind == TypeDesc::Kind::Builtin)
+            {
+                value = ensureType(std::move(value), ftype.builtin);
+                emitInstruction("store " + llvmType(ftype.builtin) + " " + value.operand + ", " + llvmType(ftype.builtin) + "* " + fieldPtr);
+            }
+        }
+    }
+
+    void visitFieldAccess(const FieldAccessNode& node) override
+    {
+        string fieldPtr = getFieldPointer(node);
+        if (fieldPtr.empty())
+        {
+            pushValue({zeroLiteral(ValueType::Invalid), false, ValueType::Invalid, ""});
+            return;
+        }
+        TypeDesc ftype = fieldTypeDesc(node);
+        if (ftype.kind == TypeDesc::Kind::Builtin)
+        {
+            string tmp = nextTemp();
+            emitInstruction(tmp + " = load " + llvmType(ftype.builtin) + ", " + llvmType(ftype.builtin) + "* " + fieldPtr);
+            pushValue({tmp, false, ftype.builtin, ""});
+        }
+        else
+        {
+            string tmp = nextTemp();
+            emitInstruction(tmp + " = load %struct." + ftype.structName + ", %struct." + ftype.structName + "* " + fieldPtr);
+            pushValue({tmp, true, ValueType::Invalid, ftype.structName});
+        }
+    }
+
+    void visitFunctionCall(const FunctionCallNode& node) override
+    {
+        auto fit = functions.find(node.name());
+        if (fit == functions.end())
+        {
+            pushValue({zeroLiteral(ValueType::Invalid), false, ValueType::Invalid, ""});
+            return;
+        }
+        const auto& f = fit->second;
+
+        std::vector<CodegenValue> args;
+        for (size_t i = 0; i < node.args().size(); ++i)
+        {
+            const ExprNode* e = node.args()[i].get();
+            e->accept(*this);
+            CodegenValue cv = popValue();
+            if (i < f.params.size() && f.params[i].type.kind == TypeDesc::Kind::Builtin)
+                cv = ensureType(std::move(cv), f.params[i].type.builtin);
+            args.push_back(std::move(cv));
+        }
+        std::string retTyIR;
+        bool retIsStruct = (f.returnType.kind == TypeDesc::Kind::Struct);
+        if (retIsStruct)
+            retTyIR = "%struct." + f.returnType.structName;
+        else
+            retTyIR = llvmType(f.returnType.builtin);
+
+    std::string tmp = nextTemp();
+        std::ostringstream argss;
+        for (size_t i = 0; i < args.size(); ++i)
+        {
+            if (i > 0) argss << ", ";
+            if (f.params[i].type.kind == TypeDesc::Kind::Struct)
+                argss << "%struct." << f.params[i].type.structName << " " << args[i].operand;
+            else
+                argss << llvmType(f.params[i].type.builtin) << " " << args[i].operand;
+        }
+        std::string callLine = tmp + " = call " + retTyIR + " @" + node.name() + "(" + argss.str() + ")";
+        emitInstruction(callLine);
+
+        if (retIsStruct)
+            pushValue({tmp, true, ValueType::Invalid, f.returnType.structName});
+        else
+            pushValue({tmp, false, f.returnType.builtin, ""});
     }
 
     void visitIf(const IfNode& node) override
@@ -1122,6 +1442,64 @@ private:
         return value;
     }
 
+    TypeDesc fieldTypeDesc(const FieldAccessNode& node)
+    {
+        SymbolID sid = node.baseSymbolId();
+        if (sid == InvalidSymbolID)
+            return TypeDesc::Builtin(ValueType::Invalid);
+
+        const auto& baseVar = variables[sid];
+        TypeDesc cur = baseVar.type;
+        for (const auto& fname : node.fieldChain())
+        {
+            auto it = structs.find(cur.structName);
+            if (it == structs.end()) return TypeDesc::Builtin(ValueType::Invalid);
+            int idx = -1; TypeDesc nextType = TypeDesc::Builtin(ValueType::Invalid);
+            for (size_t i = 0; i < it->second.fields.size(); ++i)
+            {
+                if (it->second.fields[i].name == fname)
+                { 
+                    idx = static_cast<int>(i); 
+                    nextType = it->second.fields[i].type; 
+                    break; 
+                }
+            }
+            if (idx < 0) 
+                return TypeDesc::Builtin(ValueType::Invalid);
+            cur = nextType;
+        }
+        return cur;
+    }
+
+    string getFieldPointer(const FieldAccessNode& node)
+    {
+        SymbolID sid = node.baseSymbolId();
+        if (sid == InvalidSymbolID)
+            return {};
+
+        CodegenVariable& base = getVariable(sid);
+        ensureAllocated(base);
+        string ptr = base.pointer;
+        TypeDesc cur = base.type;
+        for (const auto& fname : node.fieldChain())
+        {
+            auto it = structs.find(cur.structName);
+            if (it == structs.end()) return {};
+            int idx = -1; TypeDesc nextType = TypeDesc::Builtin(ValueType::Invalid);
+            for (size_t i = 0; i < it->second.fields.size(); ++i)
+            {
+                if (it->second.fields[i].name == fname)
+                { idx = static_cast<int>(i); nextType = it->second.fields[i].type; break; }
+            }
+            if (idx < 0) return {};
+            string gep = nextTemp();
+            emitInstruction(gep + " = getelementptr %struct." + it->second.name + ", %struct." + it->second.name + "* " + ptr + ", i32 0, i32 " + std::to_string(idx));
+            ptr = gep;
+            cur = nextType;
+        }
+        return ptr;
+    }
+
     CodegenVariable& getVariable(SymbolID id)
     {
         auto it = variables.find(id);
@@ -1193,8 +1571,7 @@ private:
         ensureAllocated(var);
         if (var.type.kind == TypeDesc::Kind::Builtin)
         {
-            emitInstruction("store " + llvmType(var.type.builtin) + " " + value.operand + ", " +
-                            llvmType(var.type.builtin) + "* " + var.pointer);
+            emitInstruction("store " + llvmType(var.type.builtin) + " " + value.operand + ", " + llvmType(var.type.builtin) + "* " + var.pointer);
         }
         else
         {
@@ -1258,6 +1635,8 @@ private:
     const std::unordered_map<string, SemanticAnalyzer::FunctionInfo>& functions;
     bool inFunction = false;
     TypeDesc functionReturnType{TypeDesc::Builtin(ValueType::Invalid)};
+    bool emittingTopLevel = false;
+    std::unordered_set<string> emittedStructs;
 };
 
 int main(int argc, char** argv)
@@ -1280,20 +1659,20 @@ int main(int argc, char** argv)
     string source = buffer.str();
     fin.close();
 
-    auto tokens = lexSource(source);
+    std::vector<Token> tokens = lexSource(source);
     SyntaxParser parser(tokens);
-    auto program = parser.parseProgram();
+    std::unique_ptr<ProgramNode> program = parser.parseProgram();
 
     if (!program || parser.hasErrors())
     {
-        const auto& errs = parser.errors();
+        const std::vector<std::string>& errs = parser.errors();
         if (errs.empty())
         {
             std::cerr << "Parse error: unable to build AST" << std::endl;
         }
         else
         {
-            for (const auto& err : errs)
+            for (const string& err : errs)
                 std::cerr << "Parse error: " << err << std::endl;
         }
         return 1;
@@ -1302,12 +1681,12 @@ int main(int argc, char** argv)
     SemanticAnalyzer semantic;
     bool semanticOk = semantic.analyze(*program);
 
-    for (const auto& warning : semantic.warnings())
+    for (const string& warning : semantic.warnings())
         std::cerr << "Warning: " << warning << std::endl;
 
     if (!semanticOk)
     {
-        for (const auto& err : semantic.errors())
+        for (const string& err : semantic.errors())
             std::cerr << "Semantic error: " << err << std::endl;
         return 1;
     }
@@ -1316,42 +1695,11 @@ int main(int argc, char** argv)
     ctx.ir << "declare i32 @printf(i8*, ...)\n\n";
     ctx.ir << "@fmt = private constant [29 x i8] c\"Program exit with result %d\\0A\\00\"\n\n";
 
-    for (const auto& [name, s] : semantic.structs())
-    {
-        ctx.ir << "%struct." << name << " = type {";
-        for (size_t i = 0; i < s.fields.size(); ++i)
-        {
-            const auto& f = s.fields[i];
-            if (i > 0) ctx.ir << ", ";
-            if (f.type.kind == TypeDesc::Kind::Builtin)
-            {
-                switch (f.type.builtin)
-                {
-                    case ValueType::I32: ctx.ir << "i32"; break;
-                    case ValueType::I64: ctx.ir << "i64"; break;
-                    case ValueType::Bool: ctx.ir << "i1"; break;
-                    default: ctx.ir << "i32"; break;
-                }
-            }
-            else
-            {
-                ctx.ir << "%struct." << f.type.structName;
-            }
-        }
-        ctx.ir << "}\n";
-    }
-
     CodeGenerator generator(ctx, semantic.symbols(), semantic.structs(), semantic.functions());
-    for (const auto& stmt : program->statements())
-    {
-        const FunctionNode* fn = dynamic_cast<const FunctionNode*>(stmt.get());
-        if (fn)
-            generator.generateFunction(*fn);
-    }
+    generator.emitTopLevel(*program);
 
     ctx.ir << "define i32 @main() {\n";
     generator.generate(*program);
-
     ctx.ir << "}\n";
 
     string filename;

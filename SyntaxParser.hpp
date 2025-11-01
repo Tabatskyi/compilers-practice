@@ -33,7 +33,7 @@ public:
 
     /// Parse either a declaration or assignment depending on current token.
     std::unique_ptr<DeclNode> parseDecl();
-    std::unique_ptr<AssignNode> parseAssign();
+    std::unique_ptr<StmtNode> parseAssign();
     std::unique_ptr<StructDeclNode> parseStructDecl();
     std::unique_ptr<FunctionNode> parseFunction();
 
