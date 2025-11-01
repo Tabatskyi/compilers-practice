@@ -47,6 +47,17 @@ std::unique_ptr<ProgramNode> SyntaxParser::parseProgram()
         skipNewlines();
     }
 
+    if (statements.empty())
+    {
+        addError("Program must end with a return statement");
+        return nullptr;
+    }
+    if (dynamic_cast<ReturnNode*>(statements.back().get()) == nullptr)
+    {
+        addError("Program must end with a return statement");
+        return nullptr;
+    }
+
     return std::make_unique<ProgramNode>(std::move(statements), 0);
 }
 

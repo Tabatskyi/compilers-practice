@@ -114,7 +114,7 @@ std::vector<Token> lexSource(const string& source)
                     i += 2;
                     continue;
                 }
-                if (std::isalpha(static_cast<unsigned char>(c)) || c == '_')
+                if (std::isalpha(static_cast<unsigned char>(c)))
                 {
                     buffer.assign(1, c);
                     state = State::Identifier;
@@ -149,7 +149,7 @@ std::vector<Token> lexSource(const string& source)
                 continue;
 
             case State::Identifier:
-                if (!atEnd && (std::isalnum(static_cast<unsigned char>(c)) || c == '_'))
+                if (!atEnd && std::isalnum(static_cast<unsigned char>(c)))
                 {
                     buffer.push_back(c);
                     ++i;
@@ -240,10 +240,10 @@ public:
         returnSeen = false;
         functionTable.clear();
 
-    program.accept(*this);
+        program.accept(*this);
 
         if (!returnSeen)
-            addWarning("Missing return statement; defaulting to 'return 0'.");
+            addError("Program must end with a return statement");
 
         return errorList.empty();
     }
@@ -904,8 +904,6 @@ public:
     {
         currentBlockTerminated = false;
         program.accept(*this);
-        if (!currentBlockTerminated)
-            emitReturn({"0", false, ValueType::I32, ""});
     }
 
     void generateFunction(const FunctionNode& fn)
