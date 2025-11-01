@@ -229,28 +229,33 @@ class SemanticAnalyzer : public ASTVisitor
 public:
     bool analyze(const ProgramNode& program)
     {
-        m_errors.clear();
-        m_warnings.clear();
-        m_symbols.clear();
-        m_scopeSymbols.clear();
-        m_scopeStack.clear();
-        m_nextSymbolId = 0;
-        m_returnSeen = false;
+        errorList.clear();
+        warningList.clear();
+        symbolTable.clear();
+        scopeSymbols.clear();
+        scopeStack.clear();
+        nextSymbolId = 0;
+        returnSeen = false;
+        functionTable.clear();
 
     program.accept(*this);
 
-        if (!m_returnSeen)
+        if (!returnSeen)
             addWarning("Missing return statement; defaulting to 'return 0'.");
 
-        return m_errors.empty();
+        return errorList.empty();
     }
 
-    const std::vector<string>& errors() const { return m_errors; }
-    const std::vector<string>& warnings() const { return m_warnings; }
-    const std::unordered_map<SymbolID, VariableInfo>& symbols() const { return m_symbols; }
+    const std::vector<string>& errors() const { return errorList; }
+    const std::vector<string>& warnings() const { return warningList; }
+    const std::unordered_map<SymbolID, VariableInfo>& symbols() const { return symbolTable; }
     struct StructFieldInfo { TypeDesc type; bool isMutable; string name; };
     struct StructInfo { string name; std::vector<StructFieldInfo> fields; };
-    const std::unordered_map<string, StructInfo>& structs() const { return m_structs; }
+    struct FunctionInfo {
+        string name; TypeDesc returnType; struct Param { TypeDesc type; string name; SymbolID symbolId; }; std::vector<Param> params; size_t scopeId = 0;
+    };
+    const std::unordered_map<string, StructInfo>& structs() const { return structTable; }
+    const std::unordered_map<string, FunctionInfo>& functions() const { return functionTable; }
 
     void visitProgram(const ProgramNode& node) override
     {
@@ -274,11 +279,64 @@ public:
         exitScope();
     }
 
+    void visitFunction(const FunctionNode& node) override
+    {
+        if (functionTable.count(node.name()))
+        {
+            addError("Function '" + node.name() + "' redeclared");
+            return;
+        }
+
+        FunctionInfo info;
+        info.name = node.name();
+        info.returnType = node.returnType();
+        info.scopeId = node.scopeId();
+        for (const auto& p : node.params())
+            info.params.push_back(FunctionInfo::Param{p.type, p.name, InvalidSymbolID});
+        functionTable.emplace(info.name, std::move(info));
+
+        // Declare parameters in function scope
+        enterScope(node.scopeId());
+        for (const auto& p : node.params())
+        {
+            auto& scopeMap = scopeSymbols[currentScopeId()];
+            if (scopeMap.count(p.name))
+            {
+                addError("Parameter '" + p.name + "' redeclared");
+                continue;
+            }
+            SymbolID symbolId = nextSymbolId++;
+            scopeMap.emplace(p.name, symbolId);
+            symbolTable.emplace(symbolId, VariableInfo{p.type, false, p.name, currentScopeId()});
+            // update stored function param symbol id
+            auto fit = functionTable.find(node.name());
+            if (fit != functionTable.end())
+            {
+                for (auto& fp : fit->second.params)
+                {
+                    if (fp.name == p.name)
+                    {
+                        fp.symbolId = symbolId;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Analyze body with function return context
+        inFunction = true;
+        currentFunctionReturn = node.returnType();
+        if (node.body())
+            node.body()->accept(*this);
+        inFunction = false;
+        exitScope();
+    }
+
     void visitDecl(const DeclNode& node) override
     {
         const string& name = node.identifier();
         size_t scope = currentScopeId();
-        auto& scopeMap = m_scopeSymbols[scope];
+        auto& scopeMap = scopeSymbols[scope];
         if (scopeMap.count(name))
         {
             addError("Variable '" + name + "' redeclared");
@@ -308,8 +366,8 @@ public:
         }
         else
         {
-            auto it = m_structs.find(node.declaredType().structName);
-            if (it == m_structs.end())
+            auto it = structTable.find(node.declaredType().structName);
+            if (it == structTable.end())
             {
                 addError("Unknown struct type '" + node.declaredType().structName + "'");
             }
@@ -350,7 +408,7 @@ public:
                             }
                             else
                             {
-                                const auto& srcVar = m_symbols[srcId];
+                                const auto& srcVar = symbolTable[srcId];
                                 if (srcVar.type.kind != TypeDesc::Kind::Struct || srcVar.type.structName != field.type.structName)
                                 {
                                     addError("Struct field '" + field.name + "' type mismatch in initializer");
@@ -362,9 +420,9 @@ public:
             }
         }
 
-        SymbolID symbolId = m_nextSymbolId++;
+        SymbolID symbolId = nextSymbolId++;
         scopeMap.emplace(name, symbolId);
-        m_symbols.emplace(symbolId, VariableInfo{node.declaredType(), node.isMutable(), name, scope});
+        symbolTable.emplace(symbolId, VariableInfo{node.declaredType(), node.isMutable(), name, scope});
         node.setSymbolId(symbolId);
     }
 
@@ -377,7 +435,7 @@ public:
         }
         else
         {
-            const auto& info = m_symbols[symbolId];
+            const auto& info = symbolTable[symbolId];
             if (!info.isMutable)
                 addError("Variable '" + node.identifier() + "' is immutable");
             if (info.type.kind == TypeDesc::Kind::Struct)
@@ -390,7 +448,7 @@ public:
             value->accept(*this);
             if (symbolId != InvalidSymbolID)
             {
-                const auto& info = m_symbols[symbolId];
+                const auto& info = symbolTable[symbolId];
                 ValueType valueType = value->type();
                 if (info.type.kind != TypeDesc::Kind::Builtin || !isAssignable(info.type.builtin, valueType))
                 {
@@ -418,17 +476,46 @@ public:
 
     void visitReturn(const ReturnNode& node) override
     {
-        m_returnSeen = true;
         if (!node.expr())
         {
             addError("Return statement requires an expression");
             return;
         }
-
         node.expr()->accept(*this);
-        ValueType type = node.expr()->type();
-        if (!canConvertToI32(type))
-            addError("Return type must be convertible to i32, got " + typeToString(type));
+        if (inFunction)
+        {
+            if (currentFunctionReturn.kind == TypeDesc::Kind::Builtin)
+            {
+                ValueType t = node.expr()->type();
+                if (!isAssignable(currentFunctionReturn.builtin, t))
+                    addError("Return type mismatch");
+            }
+            else
+            {
+                const IDNode* id = dynamic_cast<const IDNode*>(node.expr());
+                if (!id)
+                    addError("Return of struct must be a variable");
+                else
+                {
+                    SymbolID sid = id->symbolId();
+                    if (sid == InvalidSymbolID)
+                        addError("Return references undeclared variable");
+                    else
+                    {
+                        const auto& v = symbolTable[sid];
+                        if (v.type.kind != TypeDesc::Kind::Struct || v.type.structName != currentFunctionReturn.structName)
+                            addError("Return struct type mismatch");
+                    }
+                }
+            }
+        }
+        else
+        {
+            returnSeen = true;
+            ValueType type = node.expr()->type();
+            if (!canConvertToI32(type))
+                addError("Return type must be convertible to i32, got " + typeToString(type));
+        }
     }
 
     void visitBinaryOp(const BinaryOpNode& node) override
@@ -509,7 +596,7 @@ public:
             return;
         }
         node.setSymbolId(symbolId);
-        const auto& info = m_symbols[symbolId];
+    const auto& info = symbolTable[symbolId];
         if (info.type.kind == TypeDesc::Kind::Builtin)
             node.setType(info.type.builtin);
         else
@@ -533,27 +620,27 @@ public:
 private:
     void enterScope(size_t scopeId)
     {
-        m_scopeStack.push_back(scopeId);
-        m_scopeSymbols.try_emplace(scopeId, std::unordered_map<string, SymbolID>{});
+    scopeStack.push_back(scopeId);
+    scopeSymbols.try_emplace(scopeId, std::unordered_map<string, SymbolID>{});
     }
 
     void exitScope()
     {
-        if (!m_scopeStack.empty())
-            m_scopeStack.pop_back();
+        if (!scopeStack.empty())
+            scopeStack.pop_back();
     }
 
     size_t currentScopeId() const
     {
-        return m_scopeStack.empty() ? 0 : m_scopeStack.back();
+        return scopeStack.empty() ? 0 : scopeStack.back();
     }
 
     SymbolID resolveSymbol(const string& name) const
     {
-        for (auto it = m_scopeStack.rbegin(); it != m_scopeStack.rend(); ++it)
+        for (auto it = scopeStack.rbegin(); it != scopeStack.rend(); ++it)
         {
-            auto scopeIt = m_scopeSymbols.find(*it);
-            if (scopeIt == m_scopeSymbols.end())
+            auto scopeIt = scopeSymbols.find(*it);
+            if (scopeIt == scopeSymbols.end())
                 continue;
 
             auto symIt = scopeIt->second.find(name);
@@ -565,26 +652,29 @@ private:
 
     void addError(const string& message)
     {
-        m_errors.push_back(message);
+    errorList.push_back(message);
     }
 
     void addWarning(const string& message)
     {
-        m_warnings.push_back(message);
+    warningList.push_back(message);
     }
 
-    std::unordered_map<SymbolID, VariableInfo> m_symbols;
-    std::unordered_map<size_t, std::unordered_map<string, SymbolID>> m_scopeSymbols;
-    std::vector<size_t> m_scopeStack;
-    SymbolID m_nextSymbolId = 0;
-    std::vector<string> m_errors;
-    std::vector<string> m_warnings;
-    bool m_returnSeen = false;
-    std::unordered_map<string, StructInfo> m_structs;
+    std::unordered_map<SymbolID, VariableInfo> symbolTable;
+    std::unordered_map<size_t, std::unordered_map<string, SymbolID>> scopeSymbols;
+    std::vector<size_t> scopeStack;
+    SymbolID nextSymbolId = 0;
+    std::vector<string> errorList;
+    std::vector<string> warningList;
+    bool returnSeen = false;
+    std::unordered_map<string, StructInfo> structTable;
+    std::unordered_map<string, FunctionInfo> functionTable;
+    bool inFunction = false;
+    TypeDesc currentFunctionReturn{TypeDesc::Builtin(ValueType::Invalid)};
 public:
     void visitStructDecl(const StructDeclNode& node) override
     {
-        if (m_structs.count(node.name()))
+        if (structTable.count(node.name()))
         {
             addError("Struct '" + node.name() + "' redeclared");
             return;
@@ -596,14 +686,14 @@ public:
         {
             if (f.type.kind == TypeDesc::Kind::Struct)
             {
-                if (!m_structs.count(f.type.structName))
+                if (!structTable.count(f.type.structName))
                 {
                     addError("Unknown struct type '" + f.type.structName + "' used in struct '" + node.name() + "'");
                 }
             }
             info.fields.push_back(StructFieldInfo{f.type, f.isMutable, f.name});
         }
-        m_structs.emplace(info.name, std::move(info));
+        structTable.emplace(info.name, std::move(info));
     }
 };
 
@@ -629,8 +719,9 @@ class CodeGenerator : public ASTVisitor
 public:
     CodeGenerator(IRContext& ctx,
                   const std::unordered_map<SymbolID, VariableInfo>& symbols,
-                  const std::unordered_map<string, SemanticAnalyzer::StructInfo>& structs)
-        : m_ctx(ctx), m_structs(structs)
+                  const std::unordered_map<string, SemanticAnalyzer::StructInfo>& structs,
+                  const std::unordered_map<string, SemanticAnalyzer::FunctionInfo>& functions)
+        : ctx(ctx), structs(structs), functions(functions)
     {
         for (const auto& [id, info] : symbols)
         {
@@ -638,33 +729,93 @@ public:
             var.type = info.type;
             var.isMutable = info.isMutable;
             var.pointer = "%" + info.name + "." + std::to_string(id);
-            m_variables.emplace(id, std::move(var));
+            variables.emplace(id, std::move(var));
         }
     }
 
     void generate(const ProgramNode& program)
     {
-        m_currentBlockTerminated = false;
+        currentBlockTerminated = false;
         program.accept(*this);
-        if (!m_currentBlockTerminated)
-            emitReturn({"0", ValueType::I32});
+        if (!currentBlockTerminated)
+            emitReturn({"0", false, ValueType::I32, ""});
+    }
+
+    void generateFunction(const FunctionNode& fn)
+    {
+        std::string retTy;
+        if (fn.returnType().kind == TypeDesc::Kind::Builtin)
+            retTy = llvmType(fn.returnType().builtin);
+        else
+            retTy = "%struct." + fn.returnType().structName;
+
+        ctx.ir << "define " << retTy << " @" << fn.name() << "(";
+        for (size_t i = 0; i < fn.params().size(); ++i)
+        {
+            if (i > 0) ctx.ir << ", ";
+            const auto& p = fn.params()[i];
+            if (p.type.kind == TypeDesc::Kind::Builtin)
+                ctx.ir << llvmType(p.type.builtin) << " %" << p.name;
+            else
+                ctx.ir << "%struct." << p.type.structName << " %" << p.name;
+        }
+        ctx.ir << ") {\n";
+
+        auto fit = functions.find(fn.name());
+        if (fit != functions.end())
+        {
+            for (const auto& p : fit->second.params)
+            {
+                CodegenVariable& var = getVariable(p.symbolId);
+                ensureAllocated(var);
+                if (p.type.kind == TypeDesc::Kind::Builtin)
+                {
+                    emitInstruction("store " + llvmType(p.type.builtin) + " %" + p.name + ", " + llvmType(p.type.builtin) + "* " + var.pointer);
+                }
+                else
+                {
+                    emitInstruction("store %struct." + p.type.structName + " %" + p.name + ", %struct." + p.type.structName + "* " + var.pointer);
+                }
+                var.initialized = true;
+            }
+        }
+
+        inFunction = true;
+        currentBlockTerminated = false;
+        functionReturnType = fn.returnType();
+        bool fallsThrough = true;
+        if (fn.body())
+            fallsThrough = generateBlock(*fn.body(), "");
+        if (fallsThrough)
+        {
+            if (fn.returnType().kind == TypeDesc::Kind::Builtin)
+                emitInstruction(std::string("ret ") + llvmType(fn.returnType().builtin) + " 0");
+            else
+                emitInstruction("ret %struct." + fn.returnType().structName + " zeroinitializer");
+        }
+        inFunction = false;
+        ctx.ir << "}\n";
     }
 
     void visitProgram(const ProgramNode& node) override
     {
         for (const auto& stmt : node.statements())
         {
-            if (m_currentBlockTerminated)
+            if (currentBlockTerminated)
                 break;
             if (stmt)
                 stmt->accept(*this);
         }
     }
 
+    void visitStructDecl(const StructDeclNode& /*node*/) override {}
+
     void visitBlock(const BlockNode& node) override
     {
         generateBlock(node, "");
     }
+
+    void visitFunction(const FunctionNode& /*node*/) override {}
 
     void visitDecl(const DeclNode& node) override
     {
@@ -696,7 +847,7 @@ public:
             }
             else
             {
-                const auto& s = m_structs.at(var.type.structName);
+                const auto& s = structs.at(var.type.structName);
                 size_t n = std::min(node.initializers().size(), s.fields.size());
                 for (size_t i = 0; i < n; ++i)
                 {
@@ -741,7 +892,8 @@ public:
         {
             valueExpr->accept(*this);
             CodegenValue value = popValue();
-            value = ensureType(std::move(value), var.type);
+            if (var.type.kind == TypeDesc::Kind::Builtin)
+                value = ensureType(std::move(value), var.type.builtin);
             storeValue(var, value);
         }
     }
@@ -763,7 +915,7 @@ public:
         string falseLabel = hasElse ? elseLabel : endLabel;
 
         emitInstruction("br i1 " + condValue.operand + ", label %" + thenLabel + ", label %" + falseLabel);
-        m_currentBlockTerminated = true;
+        currentBlockTerminated = true;
 
         emitLabel(thenLabel);
         bool thenFallsThrough = generateBlock(*node.thenBlock(), endLabel);
@@ -778,9 +930,9 @@ public:
         emitLabel(endLabel);
 
         if (hasElse && !thenFallsThrough && !elseFallsThrough)
-            m_currentBlockTerminated = true;
+            currentBlockTerminated = true;
         else
-            m_currentBlockTerminated = false;
+            currentBlockTerminated = false;
     }
 
     void visitReturn(const ReturnNode& node) override
@@ -837,7 +989,7 @@ public:
             }
         }
 
-        pushValue({zeroLiteral(ValueType::Invalid), ValueType::Invalid});
+    pushValue({zeroLiteral(ValueType::Invalid), false, ValueType::Invalid, ""});
     }
 
     void visitUnaryOp(const UnaryOpNode& node) override
@@ -938,43 +1090,43 @@ private:
 
     string nextTemp()
     {
-        return "%t" + std::to_string(m_ctx.tempId++);
+        return "%t" + std::to_string(ctx.tempId++);
     }
 
     string nextLabel(const string& base)
     {
-        return base + std::to_string(m_labelId++);
+        return base + std::to_string(labelId++);
     }
 
     void emitLabel(const string& label)
     {
-        m_ctx.ir << label << ":\n";
+        ctx.ir << label << ":\n";
     }
 
     void emitInstruction(const string& text)
     {
-        m_ctx.ir << "  " << text << "\n";
+        ctx.ir << "  " << text << "\n";
     }
 
     void pushValue(CodegenValue value)
     {
-        m_stack.push_back(std::move(value));
+        stack.push_back(std::move(value));
     }
 
     CodegenValue popValue()
     {
-        if (m_stack.empty())
+        if (stack.empty())
             return {"0", false, ValueType::Invalid, ""};
-        CodegenValue value = std::move(m_stack.back());
-        m_stack.pop_back();
+        CodegenValue value = std::move(stack.back());
+        stack.pop_back();
         return value;
     }
 
     CodegenVariable& getVariable(SymbolID id)
     {
-        auto it = m_variables.find(id);
-        if (it == m_variables.end())
-            it = m_variables.emplace(id, CodegenVariable{}).first;
+        auto it = variables.find(id);
+        if (it == variables.end())
+            it = variables.emplace(id, CodegenVariable{}).first;
         CodegenVariable& var = it->second;
         if (var.pointer.empty())
             var.pointer = "%tmpvar." + std::to_string(id);
@@ -1053,41 +1205,59 @@ private:
 
     void emitReturn(CodegenValue value)
     {
-        value = ensureType(std::move(value), ValueType::I32);
-        string fmtPtr = nextTemp();
-        emitInstruction(fmtPtr + " = getelementptr [29 x i8], [29 x i8]* @fmt, i32 0, i32 0");
-        emitInstruction("call i32 (i8*, ...) @printf(i8* " + fmtPtr + ", i32 " + value.operand + ")");
-        emitInstruction("ret i32 " + value.operand);
-        m_currentBlockTerminated = true;
+        if (inFunction)
+        {
+            if (functionReturnType.kind == TypeDesc::Kind::Builtin)
+            {
+                value = ensureType(std::move(value), functionReturnType.builtin);
+                emitInstruction(std::string("ret ") + llvmType(functionReturnType.builtin) + " " + value.operand);
+            }
+            else
+            {
+                emitInstruction("ret %struct." + functionReturnType.structName + " " + value.operand);
+            }
+        }
+        else
+        {
+            value = ensureType(std::move(value), ValueType::I32);
+            string fmtPtr = nextTemp();
+            emitInstruction(fmtPtr + " = getelementptr [29 x i8], [29 x i8]* @fmt, i32 0, i32 0");
+            emitInstruction("call i32 (i8*, ...) @printf(i8* " + fmtPtr + ", i32 " + value.operand + ")");
+            emitInstruction("ret i32 " + value.operand);
+        }
+        currentBlockTerminated = true;
     }
 
     bool generateBlock(const BlockNode& node, const string& exitLabel)
     {
-        bool savedTerminated = m_currentBlockTerminated;
-        m_currentBlockTerminated = false;
+        bool savedTerminated = currentBlockTerminated;
+        currentBlockTerminated = false;
 
         for (const auto& stmt : node.statements())
         {
-            if (m_currentBlockTerminated)
+            if (currentBlockTerminated)
                 break;
             if (stmt)
                 stmt->accept(*this);
         }
 
-        bool fallsThrough = !m_currentBlockTerminated;
+        bool fallsThrough = !currentBlockTerminated;
         if (fallsThrough && !exitLabel.empty())
             emitInstruction("br label %" + exitLabel);
 
-        m_currentBlockTerminated = savedTerminated;
+        currentBlockTerminated = savedTerminated;
         return fallsThrough;
     }
 
-    IRContext& m_ctx;
-    std::unordered_map<SymbolID, CodegenVariable> m_variables;
-    std::vector<CodegenValue> m_stack;
-    int m_labelId = 0;
-    bool m_currentBlockTerminated = false;
-    const std::unordered_map<string, SemanticAnalyzer::StructInfo>& m_structs;
+    IRContext& ctx;
+    std::unordered_map<SymbolID, CodegenVariable> variables;
+    std::vector<CodegenValue> stack;
+    int labelId = 0;
+    bool currentBlockTerminated = false;
+    const std::unordered_map<string, SemanticAnalyzer::StructInfo>& structs;
+    const std::unordered_map<string, SemanticAnalyzer::FunctionInfo>& functions;
+    bool inFunction = false;
+    TypeDesc functionReturnType{TypeDesc::Builtin(ValueType::Invalid)};
 };
 
 int main(int argc, char** argv)
@@ -1171,9 +1341,15 @@ int main(int argc, char** argv)
         ctx.ir << "}\n";
     }
 
-    ctx.ir << "define i32 @main() {\n";
+    CodeGenerator generator(ctx, semantic.symbols(), semantic.structs(), semantic.functions());
+    for (const auto& stmt : program->statements())
+    {
+        const FunctionNode* fn = dynamic_cast<const FunctionNode*>(stmt.get());
+        if (fn)
+            generator.generateFunction(*fn);
+    }
 
-    CodeGenerator generator(ctx, semantic.symbols(), semantic.structs());
+    ctx.ir << "define i32 @main() {\n";
     generator.generate(*program);
 
     ctx.ir << "}\n";

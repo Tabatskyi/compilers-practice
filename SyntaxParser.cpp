@@ -1,20 +1,20 @@
 #include "SyntaxParser.hpp"
 
-SyntaxParser::SyntaxParser(std::vector<Token> tokens): m_tokens(std::move(tokens)) {}
+SyntaxParser::SyntaxParser(std::vector<Token> tokens): tokens(std::move(tokens)) {}
 
 const Token* SyntaxParser::peek(size_t offset) const
 {
-    size_t target = m_index + offset;
-    if (target >= m_tokens.size())
+    size_t target = index + offset;
+    if (target >= tokens.size())
         return nullptr;
-    return& m_tokens[target];
+    return& tokens[target];
 }
 
 const Token* SyntaxParser::eat()
 {
     if (atEnd())
         return nullptr;
-    return& m_tokens[m_index++];
+    return& tokens[index++];
 }
 
 std::unique_ptr<ProgramNode> SyntaxParser::parseProgram()
@@ -63,9 +63,8 @@ std::unique_ptr<StmtNode> SyntaxParser::parseStmt()
 
         case TokenType::Identifier:
         {
-            // Could be a declaration of a struct-typed variable or an assignment
             std::string name = token->lexeme;
-            for (const auto& s : m_knownStructs)
+            for (const auto& s : knownStructs)
             {
                 if (s == name)
                     return parseDecl();
@@ -193,7 +192,6 @@ std::unique_ptr<DeclNode> SyntaxParser::parseDecl()
         skipNewlines();
         if (type.kind == TypeDesc::Kind::Struct)
         {
-            // Parse comma-separated initializer list for struct
             if (peek() && peek()->type != TokenType::BlockEnd)
             {
                 while (true)
@@ -253,9 +251,8 @@ TypeDesc SyntaxParser::parseType()
 
         case TokenType::Identifier:
         {
-            // Allow previously-declared struct names as types
             std::string name = token->lexeme;
-            for (const auto& s : m_knownStructs)
+            for (const auto& s : knownStructs)
             {
                 if (s == name)
                 {
@@ -506,7 +503,7 @@ std::unique_ptr<StructDeclNode> SyntaxParser::parseStructDecl()
         fields.push_back(StructDeclNode::Field{std::move(fieldType), std::move(fieldName), isMutable});
     }
 
-    m_knownStructs.push_back(structName);
+    knownStructs.push_back(structName);
 
     return std::make_unique<StructDeclNode>(std::move(structName), std::move(fields));
 }
@@ -583,7 +580,7 @@ std::unique_ptr<FunctionNode> SyntaxParser::parseFunction()
 
 bool SyntaxParser::atEnd() const
 {
-    return m_index >= m_tokens.size() || (m_tokens[m_index].type == TokenType::EndOfFile);
+    return index >= tokens.size() || (tokens[index].type == TokenType::EndOfFile);
 }
 
 bool SyntaxParser::match(TokenType type)
@@ -591,7 +588,7 @@ bool SyntaxParser::match(TokenType type)
     const Token* token = peek();
     if (token&& token->type == type)
     {
-        ++m_index;
+        ++index;
         return true;
     }
     return false;
@@ -613,10 +610,10 @@ void SyntaxParser::skipNewlines()
 
 size_t SyntaxParser::allocateScopeId()
 {
-    return m_nextScopeId++;
+    return nextScopeId++;
 }
 
 void SyntaxParser::addError(const std::string& message)
 {
-    m_errors.push_back(message);
+    errorList.push_back(message);
 }

@@ -46,10 +46,10 @@ public:
     std::unique_ptr<ExprNode> parsePrimary();
 
     /// Whether parsing produced any errors.
-    bool hasErrors() const { return !m_errors.empty(); }
+    bool hasErrors() const { return !errorList.empty(); }
 
     /// Retrieve the list of diagnostic messages.
-    const std::vector<std::string>& errors() const { return m_errors; }
+    const std::vector<std::string>& errors() const { return errorList; }
 
 private:
     bool atEnd() const;
@@ -62,10 +62,9 @@ private:
 
     void addError(const std::string& message);
 
-    std::vector<Token> m_tokens;
-    size_t m_index = 0;
-    std::vector<std::string> m_errors;
-    size_t m_nextScopeId = 1;
-    // Parsed struct names available for type recognition
-    std::vector<std::string> m_knownStructs;
+    std::vector<Token> tokens;
+    size_t index = 0;
+    std::vector<std::string> errorList;
+    size_t nextScopeId = 1;
+    std::vector<std::string> knownStructs;
 };
