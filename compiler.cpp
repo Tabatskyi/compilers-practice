@@ -1,18 +1,12 @@
 #include "Token.hpp"
 #include "SyntaxParser.hpp"
 
-#include <cctype>
-#include <cstddef>
-#include <cstdint>
-#include <fstream>
-#include <iostream>
 #include <limits>
 #include <sstream>
-#include <string>
+#include <fstream>
+#include <iostream>
 #include <unordered_map>
 #include <unordered_set>
-#include <utility>
-#include <vector>
 
 using std::string;
 
@@ -820,26 +814,7 @@ public:
             return;
         }
 
-        SemanticAnalyzer::FunctionInfo const* funcInfo = nullptr;
-        auto itGlobal = functionTable.find(node.funcName());
-        if (itGlobal != functionTable.end())
-        {
-
-            if (itGlobal->second.isMember && itGlobal->second.masterStruct == current.structName)
-                funcInfo = &itGlobal->second;
-        }
-
-        if (!funcInfo)
-        {
-            for (auto& keyValue : functionTable)
-            {
-                if (keyValue.second.name == node.funcName() && keyValue.second.isMember && keyValue.second.masterStruct == current.structName)
-                {
-                    funcInfo = &keyValue.second;
-                    break;
-                }
-            }
-        }
+        const FunctionInfo* funcInfo = findMemberFunction(node.funcName(), current.structName);
         if (!funcInfo)
         {
             addError("Call to undeclared member function '" + node.funcName() + "'");
@@ -852,38 +827,14 @@ public:
             return;
         }
 
-        size_t expectedUserArgs = funcInfo->params.size();
-        if (node.args().size() != expectedUserArgs - 1)
+        size_t expectedUserArgs = funcInfo->params.size() - 1;
+        if (node.args().size() != expectedUserArgs)
         {
             addError("Member function '" + node.funcName() + "' called with wrong number of arguments");
             return;
         }
 
-        for (size_t i = 0; i < node.args().size(); ++i)
-        {
-            const ExprNode* arg = node.args()[i].get();
-            arg->accept(*this);
-            const auto& param = funcInfo->params[i+1];
-            if (param.type.kind == TypeDesc::Kind::Builtin)
-            {
-                if (!isAssignable(param.type.builtin, arg->type()))
-                    addError("Argument type mismatch at position " + std::to_string(i));
-            }
-            else
-            {
-                const IDNode* id = dynamic_cast<const IDNode*>(arg);
-                if (!id)
-                    addError("Struct argument must be a variable of type '" + param.type.structName + "'");
-                else if (id->symbolId() == InvalidSymbolID)
-                    addError("Use of undeclared variable in member function call");
-                else
-                {
-                    const auto& var = symbolTable[id->symbolId()];
-                    if (var.type.kind != TypeDesc::Kind::Struct || var.type.structName != param.type.structName)
-                        addError("Struct argument type mismatch");
-                }
-            }
-        }
+        validateCallArguments(node.args(), *funcInfo, 1, "Use of undeclared variable in member function call");
 
         if (funcInfo->returnType.kind == TypeDesc::Kind::Builtin)
             const_cast<MemberFunctionCallNode&>(node).setType(funcInfo->returnType.builtin);
@@ -905,34 +856,7 @@ public:
             addError("Function '" + node.name() + "' called with wrong number of arguments");
             return;
         }
-        for (size_t i = 0; i < node.args().size(); ++i)
-        {
-            const ExprNode* arg = node.args()[i].get();
-            arg->accept(*this);
-            const auto& p = func.params[i];
-            if (p.type.kind == TypeDesc::Kind::Builtin)
-            {
-                if (!isAssignable(p.type.builtin, arg->type()))
-                    addError("Argument type mismatch at position " + std::to_string(i));
-            }
-            else
-            {
-                const IDNode* id = dynamic_cast<const IDNode*>(arg);
-                if (!id)
-                    addError("Struct argument must be a variable of type '" + p.type.structName + "'");
-                else
-                {
-                    if (id->symbolId() == InvalidSymbolID)
-                        addError("Use of undeclared variable in function call");
-                    else
-                    {
-                        const auto& v = symbolTable[id->symbolId()];
-                        if (v.type.kind != TypeDesc::Kind::Struct || v.type.structName != p.type.structName)
-                            addError("Struct argument type mismatch");
-                    }
-                }
-            }
-        }
+    validateCallArguments(node.args(), func, 0, "Use of undeclared variable in function call");
         if (func.returnType.kind == TypeDesc::Kind::Builtin)
         {
             const_cast<FunctionCallNode&>(node).setType(func.returnType.builtin);
@@ -978,12 +902,75 @@ private:
 
     void addError(const string& message)
     {
-    errorList.push_back(message);
+        errorList.push_back(message);
     }
 
     void addWarning(const string& message)
     {
-    warningList.push_back(message);
+        warningList.push_back(message);
+    }
+
+    void validateCallArguments(const std::vector<std::unique_ptr<ExprNode>>& args, const FunctionInfo& funcInfo, size_t paramStartIndex, const string& undeclaredVarMessage)
+    {
+        for (size_t i = 0; i < args.size(); ++i)
+        {
+            const ExprNode* arg = args[i] ? args[i].get() : nullptr;
+            if (!arg)
+                continue;
+
+            arg->accept(*this);
+            if (paramStartIndex + i >= funcInfo.params.size())
+            {
+                addError("Argument type mismatch at position " + std::to_string(i));
+                continue;
+            }
+
+            const auto& param = funcInfo.params[paramStartIndex + i];
+            if (param.type.kind == TypeDesc::Kind::Builtin)
+            {
+                if (!isAssignable(param.type.builtin, arg->type()))
+                    addError("Argument type mismatch at position " + std::to_string(i));
+            }
+            else
+            {
+                const IDNode* id = dynamic_cast<const IDNode*>(arg);
+                if (!id)
+                {
+                    addError("Struct argument must be a variable of type '" + param.type.structName + "'");
+                }
+                else if (id->symbolId() == InvalidSymbolID)
+                {
+                    addError(undeclaredVarMessage);
+                }
+                else
+                {
+                    auto varIt = symbolTable.find(id->symbolId());
+                    if (varIt == symbolTable.end())
+                    {
+                        addError(undeclaredVarMessage);
+                    }
+                    else
+                    {
+                        const auto& var = varIt->second;
+                        if (var.type.kind != TypeDesc::Kind::Struct || var.type.structName != param.type.structName)
+                            addError("Struct argument type mismatch");
+                    }
+                }
+            }
+        }
+    }
+
+    const FunctionInfo* findMemberFunction(const string& funcName, const string& structName) const
+    {
+        auto it = functionTable.find(funcName);
+        if (it != functionTable.end() && it->second.isMember && it->second.masterStruct == structName)
+            return &it->second;
+        for (const auto& entry : functionTable)
+        {
+            if (entry.second.name == funcName && entry.second.isMember && entry.second.masterStruct == structName)
+                return &entry.second;
+        }
+        return nullptr;
     }
 
     std::unordered_map<SymbolID, VariableInfo> symbolTable;
@@ -1445,18 +1432,7 @@ public:
         string structVal = nextTemp();
         emitInstruction(structVal + " = load %struct." + current.structName + ", %struct." + current.structName + "* " + basePtr);
 
-        const SemanticAnalyzer::FunctionInfo* funcInfo = nullptr;
-        auto it = functions.find(node.funcName());
-        if (it != functions.end() && it->second.isMember && it->second.masterStruct == current.structName)
-            funcInfo = &it->second;
-        if (!funcInfo)
-        {
-            for (auto& keyValue : functions)
-            {
-                if (keyValue.second.name == node.funcName() && keyValue.second.isMember && keyValue.second.masterStruct == current.structName)
-                { funcInfo = &keyValue.second; break; }
-            }
-        }
+        const auto* funcInfo = findMemberFunction(node.funcName(), current.structName);
         if (!funcInfo)
         {
             pushValue({zeroLiteral(ValueType::Invalid), false, ValueType::Invalid, ""});
@@ -1709,6 +1685,19 @@ public:
     }
 
 private:
+    const SemanticAnalyzer::FunctionInfo* findMemberFunction(const string& funcName, const string& structName) const
+    {
+        auto it = functions.find(funcName);
+        if (it != functions.end() && it->second.isMember && it->second.masterStruct == structName)
+            return &it->second;
+        for (const auto& entry : functions)
+        {
+            if (entry.second.name == funcName && entry.second.isMember && entry.second.masterStruct == structName)
+                return &entry.second;
+        }
+        return nullptr;
+    }
+
     string llvmType(ValueType type) const
     {
         switch (type)

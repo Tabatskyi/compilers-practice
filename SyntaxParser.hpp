@@ -3,11 +3,6 @@
 #include "ASTNode.hpp"
 #include "Token.hpp"
 
-#include <cstddef>
-#include <memory>
-#include <string>
-#include <vector>
-
 /// Syntax parser that consumes a token stream and produces an AST.
 class SyntaxParser
 {
