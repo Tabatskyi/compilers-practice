@@ -497,6 +497,31 @@ std::unique_ptr<ExprNode> SyntaxParser::parsePrimary()
                     chain.push_back(f->lexeme);
                     eat();
                 }
+
+                if (!chain.empty() && peek() && peek()->type == TokenType::LParen)
+                {
+                    std::string fnName = chain.back();
+                    chain.pop_back();
+                    if (!expect(TokenType::LParen, "Expected '(' after member function name"))
+                        return nullptr;
+                    std::vector<std::unique_ptr<ExprNode>> args;
+                    skipNewlines();
+                    if (peek() && peek()->type != TokenType::RParen)
+                    {
+                        while (true)
+                        {
+                            auto arg = parseExpr();
+                            if (!arg) return nullptr;
+                            args.push_back(std::move(arg));
+                            skipNewlines();
+                            if (match(TokenType::Comma)) { skipNewlines(); continue; }
+                            break;
+                        }
+                    }
+                    if (!expect(TokenType::RParen, "Expected ')' after arguments"))
+                        return nullptr;
+                    return std::make_unique<MemberFunctionCallNode>(std::move(name), std::move(chain), std::move(fnName), std::move(args));
+                }
                 return std::make_unique<FieldAccessNode>(std::move(name), std::move(chain));
             }
             return std::make_unique<IDNode>(std::move(name));
@@ -538,8 +563,12 @@ std::unique_ptr<StructDeclNode> SyntaxParser::parseStructDecl()
     if (!expect(TokenType::BlockStart, "Expected '{' to start struct body"))
         return nullptr;
 
+    knownStructs.push_back(structName);
+
     std::vector<StructDeclNode::Field> fields;
+    std::vector<std::unique_ptr<FunctionNode>> methods;
     skipNewlines();
+    bool parsingFields = true;
     while (true)
     {
         const Token* t = peek();
@@ -553,19 +582,30 @@ std::unique_ptr<StructDeclNode> SyntaxParser::parseStructDecl()
             eat();
             break;
         }
-
+        if (t->type == TokenType::Fn)
+        {
+            parsingFields = false;
+            auto m = parseFunction(true, structName);
+            if (!m) return nullptr;
+            methods.push_back(std::move(m));
+            skipNewlines();
+            continue;
+        }
+        if (!parsingFields)
+        {
+            addError("Member functions must follow all fields");
+            return nullptr;
+        }
         TypeDesc fieldType = parseType();
         if (fieldType.kind == TypeDesc::Kind::Builtin && fieldType.builtin == ValueType::Invalid)
             return nullptr;
         skipNewlines();
-
         bool isMutable = false;
         while (match(TokenType::Mut))
         {
             isMutable = true;
             skipNewlines();
         }
-
         const Token* fieldNameTok = peek();
         if (!fieldNameTok || fieldNameTok->type != TokenType::Identifier)
         {
@@ -575,16 +615,13 @@ std::unique_ptr<StructDeclNode> SyntaxParser::parseStructDecl()
         std::string fieldName = fieldNameTok->lexeme;
         eat();
         skipNewlines();
-
+        
         fields.push_back(StructDeclNode::Field{std::move(fieldType), std::move(fieldName), isMutable});
     }
-
-    knownStructs.push_back(structName);
-
-    return std::make_unique<StructDeclNode>(std::move(structName), std::move(fields));
+    return std::make_unique<StructDeclNode>(std::move(structName), std::move(fields), std::move(methods));
 }
 
-std::unique_ptr<FunctionNode> SyntaxParser::parseFunction()
+std::unique_ptr<FunctionNode> SyntaxParser::parseFunction(bool isMember, const std::string& masterStruct)
 {
     if (!expect(TokenType::Fn, "Expected 'fn'"))
         return nullptr;
@@ -605,6 +642,10 @@ std::unique_ptr<FunctionNode> SyntaxParser::parseFunction()
         return nullptr;
 
     std::vector<FunctionNode::Param> params;
+    if (isMember)
+    {
+        params.push_back(FunctionNode::Param{TypeDesc::Struct(masterStruct), std::string("_self"), InvalidSymbolID});
+    }
     skipNewlines();
     if (peek() && peek()->type != TokenType::RParen)
     {
@@ -651,6 +692,8 @@ std::unique_ptr<FunctionNode> SyntaxParser::parseFunction()
     if (!body)
         return nullptr;
 
+    if (isMember)
+        return std::make_unique<FunctionNode>(std::move(funcName), std::move(params), std::move(retType), std::move(body), body->scopeId(), masterStruct);
     return std::make_unique<FunctionNode>(std::move(funcName), std::move(params), std::move(retType), std::move(body), body->scopeId());
 }
 

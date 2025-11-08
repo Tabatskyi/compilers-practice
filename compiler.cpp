@@ -251,13 +251,31 @@ public:
     const std::vector<string>& errors() const { return errorList; }
     const std::vector<string>& warnings() const { return warningList; }
     const std::unordered_map<SymbolID, VariableInfo>& symbols() const { return symbolTable; }
-    struct StructFieldInfo { TypeDesc type; bool isMutable; string name; };
-    struct StructInfo { string name; std::vector<StructFieldInfo> fields; };
+    struct StructFieldInfo 
+    { 
+        TypeDesc type; 
+        bool isMutable; 
+        string name; 
+    };
+    struct StructInfo 
+    { 
+        string name; 
+        std::vector<StructFieldInfo> fields; 
+    };
     struct FunctionInfo 
     {
-        string name; TypeDesc returnType; 
-        struct Param { TypeDesc type; string name; SymbolID symbolId; }; 
-        std::vector<Param> params; size_t scopeId = 0;
+        string name; 
+        TypeDesc returnType; 
+        struct Param 
+        { 
+            TypeDesc type; 
+            string name; 
+            SymbolID symbolId; 
+        }; 
+        std::vector<Param> params; 
+        size_t scopeId = 0; 
+        string masterStruct; 
+        bool isMember = false;
     };
     const std::unordered_map<string, StructInfo>& structs() const { return structTable; }
     const std::unordered_map<string, FunctionInfo>& functions() const { return functionTable; }
@@ -296,6 +314,8 @@ public:
         info.name = node.name();
         info.returnType = node.returnType();
         info.scopeId = node.scopeId();
+        info.isMember = node.isMember();
+        info.masterStruct = node.isMember() ? node.masterStruct() : "";
         for (const auto& p : node.params())
             info.params.push_back(FunctionInfo::Param{p.type, p.name, InvalidSymbolID});
         functionTable.emplace(info.name, std::move(info));
@@ -327,11 +347,14 @@ public:
             }
         }
 
+        std::string prevMaster = currentMemberMaster;
         inFunction = true;
+        currentMemberMaster = node.isMember() ? node.masterStruct() : "";
         currentFunctionReturn = node.returnType();
         if (node.body())
             node.body()->accept(*this);
         inFunction = false;
+        currentMemberMaster = prevMaster;
         exitScope();
     }
 
@@ -594,6 +617,26 @@ public:
         SymbolID symbolId = resolveSymbol(node.name());
         if (symbolId == InvalidSymbolID)
         {
+            if (inFunction && !currentMemberMaster.empty())
+            {
+                auto it = structTable.find(currentMemberMaster);
+                if (it != structTable.end())
+                {
+                    for (const auto& field : it->second.fields)
+                    {
+                        if (field.name == node.name())
+                        {
+                            if (field.type.kind == TypeDesc::Kind::Builtin)
+                            {
+                                node.setType(field.type.builtin);
+                                return;
+                            }
+                            node.setType(ValueType::Invalid);
+                            return;
+                        }
+                    }
+                }
+            }
             addError("Use of undeclared variable '" + node.name() + "'");
             node.setType(ValueType::Invalid);
             return;
@@ -636,37 +679,37 @@ public:
             node.setType(ValueType::Invalid);
             return;
         }
-        TypeDesc cur = baseVar.type;
+        TypeDesc current = baseVar.type;
         for (size_t i = 0; i < node.fieldChain().size(); ++i)
         {
-            auto it = structTable.find(cur.structName);
+            auto it = structTable.find(current.structName);
             if (it == structTable.end())
             {
-                addError("Unknown struct type '" + cur.structName + "'");
+                addError("Unknown struct type '" + current.structName + "'");
                 node.setType(ValueType::Invalid);
                 return;
             }
             const auto& fields = it->second.fields;
-            const std::string& fname = node.fieldChain()[i];
+            const std::string& fieldName = node.fieldChain()[i];
             bool found = false;
-            for (const auto& f : fields)
+            for (const auto& field : fields)
             {
-                if (f.name == fname)
+                if (field.name == fieldName)
                 {
-                    cur = f.type;
+                    current = field.type;
                     found = true;
                     break;
                 }
             }
             if (!found)
             {
-                addError("Struct '" + it->second.name + "' has no field '" + fname + "'");
+                addError("Struct '" + it->second.name + "' has no field '" + fieldName + "'");
                 node.setType(ValueType::Invalid);
                 return;
             }
         }
-        if (cur.kind == TypeDesc::Kind::Builtin)
-            node.setType(cur.builtin);
+        if (current.kind == TypeDesc::Kind::Builtin)
+            node.setType(current.builtin);
         else
             node.setType(ValueType::Invalid);
     }
@@ -684,31 +727,39 @@ public:
         const auto& baseVar = symbolTable[baseId];
 
         bool chainMutable = baseVar.isMutable;
-        TypeDesc cur = baseVar.type;
+        TypeDesc current = baseVar.type;
         for (size_t i = 0; i < fieldAccess->fieldChain().size(); ++i)
         {
-            auto it = structTable.find(cur.structName);
-            if (it == structTable.end()) { chainMutable = false; break; }
-            const std::string& fname = fieldAccess->fieldChain()[i];
-            bool found = false;
-            for (const auto& f : it->second.fields)
+            auto it = structTable.find(current.structName);
+            if (it == structTable.end())
             {
-                if (f.name == fname)
+                chainMutable = false; 
+                break; 
+            }
+            const std::string& fieldName = fieldAccess->fieldChain()[i];
+            bool found = false;
+            for (const auto& field : it->second.fields)
+            {
+                if (field.name == fieldName)
                 {
                     if (i < fieldAccess->fieldChain().size() - 1)
-                        chainMutable = chainMutable && f.isMutable;
-                    cur = f.type;
+                        chainMutable = chainMutable && field.isMutable;
+                    current = field.type;
                     found = true;
                     break;
                 }
             }
-            if (!found) { chainMutable = false; break; }
+            if (!found) 
+            { 
+                chainMutable = false; 
+                break; 
+            }
         }
 
         if (!chainMutable)
             addError("Field access is immutable");
 
-        if (cur.kind == TypeDesc::Kind::Struct)
+        if (current.kind == TypeDesc::Kind::Struct)
         {
             addError("Assignment to struct fields is not supported in this task");
         }
@@ -716,12 +767,128 @@ public:
         if (const ExprNode* value = node.value())
         {
             value->accept(*this);
-            if (cur.kind == TypeDesc::Kind::Builtin)
+            if (current.kind == TypeDesc::Kind::Builtin)
             {
-                if (!isAssignable(cur.builtin, value->type()))
+                if (!isAssignable(current.builtin, value->type()))
                     addError("Cannot assign incompatible type to field");
             }
         }
+    }
+
+    void visitMemberFunctionCall(const MemberFunctionCallNode& node) override
+    {
+        SymbolID baseId = resolveSymbol(node.base());
+        if (baseId == InvalidSymbolID)
+        {
+            addError("Use of undeclared variable '" + node.base() + "'");
+            return;
+        }
+        node.setBaseSymbolId(baseId);
+        const auto& baseVar = symbolTable[baseId];
+
+        if (baseVar.type.kind != TypeDesc::Kind::Struct)
+        {
+            addError("Variable '" + node.base() + "' is not a struct");
+            return;
+        }
+
+        TypeDesc current = baseVar.type;
+        for (size_t i = 0; i < node.fieldChain().size(); ++i)
+        {
+            auto it = structTable.find(current.structName);
+            if (it == structTable.end()) { addError("Unknown struct type '" + current.structName + "'"); return; }
+            const string& fieldName = node.fieldChain()[i];
+            bool found = false;
+            for (const auto& field : it->second.fields)
+            {
+                if (field.name == fieldName)
+                {
+                    current = field.type;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found)
+            {
+                addError("Struct '" + it->second.name + "' has no field '" + fieldName + "'");
+                return;
+            }
+        }
+        if (current.kind != TypeDesc::Kind::Struct)
+        {
+            addError("Member function call base must resolve to a struct");
+            return;
+        }
+
+        SemanticAnalyzer::FunctionInfo const* funcInfo = nullptr;
+        auto itGlobal = functionTable.find(node.funcName());
+        if (itGlobal != functionTable.end())
+        {
+
+            if (itGlobal->second.isMember && itGlobal->second.masterStruct == current.structName)
+                funcInfo = &itGlobal->second;
+        }
+
+        if (!funcInfo)
+        {
+            for (auto& keyValue : functionTable)
+            {
+                if (keyValue.second.name == node.funcName() && keyValue.second.isMember && keyValue.second.masterStruct == current.structName)
+                {
+                    funcInfo = &keyValue.second;
+                    break;
+                }
+            }
+        }
+        if (!funcInfo)
+        {
+            addError("Call to undeclared member function '" + node.funcName() + "'");
+            return;
+        }
+
+        if (funcInfo->params.empty())
+        {
+            addError("Corrupt member function info");
+            return;
+        }
+
+        size_t expectedUserArgs = funcInfo->params.size();
+        if (node.args().size() != expectedUserArgs - 1)
+        {
+            addError("Member function '" + node.funcName() + "' called with wrong number of arguments");
+            return;
+        }
+
+        for (size_t i = 0; i < node.args().size(); ++i)
+        {
+            const ExprNode* arg = node.args()[i].get();
+            arg->accept(*this);
+            const auto& param = funcInfo->params[i+1];
+            if (param.type.kind == TypeDesc::Kind::Builtin)
+            {
+                if (!isAssignable(param.type.builtin, arg->type()))
+                    addError("Argument type mismatch at position " + std::to_string(i));
+            }
+            else
+            {
+                const IDNode* id = dynamic_cast<const IDNode*>(arg);
+                if (!id)
+                    addError("Struct argument must be a variable of type '" + param.type.structName + "'");
+                else if (id->symbolId() == InvalidSymbolID)
+                    addError("Use of undeclared variable in member function call");
+                else
+                {
+                    const auto& var = symbolTable[id->symbolId()];
+                    if (var.type.kind != TypeDesc::Kind::Struct || var.type.structName != param.type.structName)
+                        addError("Struct argument type mismatch");
+                }
+            }
+        }
+
+        if (funcInfo->returnType.kind == TypeDesc::Kind::Builtin)
+            const_cast<MemberFunctionCallNode&>(node).setType(funcInfo->returnType.builtin);
+        else
+            const_cast<MemberFunctionCallNode&>(node).setType(ValueType::Invalid);
     }
 
     void visitFunctionCall(const FunctionCallNode& node) override
@@ -732,8 +899,8 @@ public:
             addError("Call to undeclared function '" + node.name() + "'");
             return;
         }
-        const auto& fn = it->second;
-        if (node.args().size() != fn.params.size())
+        const auto& func = it->second;
+        if (node.args().size() != func.params.size())
         {
             addError("Function '" + node.name() + "' called with wrong number of arguments");
             return;
@@ -742,7 +909,7 @@ public:
         {
             const ExprNode* arg = node.args()[i].get();
             arg->accept(*this);
-            const auto& p = fn.params[i];
+            const auto& p = func.params[i];
             if (p.type.kind == TypeDesc::Kind::Builtin)
             {
                 if (!isAssignable(p.type.builtin, arg->type()))
@@ -766,9 +933,9 @@ public:
                 }
             }
         }
-        if (fn.returnType.kind == TypeDesc::Kind::Builtin)
+        if (func.returnType.kind == TypeDesc::Kind::Builtin)
         {
-            const_cast<FunctionCallNode&>(node).setType(fn.returnType.builtin);
+            const_cast<FunctionCallNode&>(node).setType(func.returnType.builtin);
         }
         else
         {
@@ -830,6 +997,7 @@ private:
     std::unordered_map<string, FunctionInfo> functionTable;
     bool inFunction = false;
     TypeDesc currentFunctionReturn{TypeDesc::Builtin(ValueType::Invalid)};
+    std::string currentMemberMaster;
 public:
     void visitStructDecl(const StructDeclNode& node) override
     {
@@ -841,7 +1009,7 @@ public:
 
         StructInfo info;
         info.name = node.name();
-        for (const auto& f : node.fields())
+        for (const StructDeclNode::Field& f : node.fields())
         {
             if (f.type.kind == TypeDesc::Kind::Struct)
             {
@@ -853,6 +1021,11 @@ public:
             info.fields.push_back(StructFieldInfo{f.type, f.isMutable, f.name});
         }
         structTable.emplace(info.name, std::move(info));
+        for (const std::unique_ptr<FunctionNode>& func : node.functions())
+        {
+            if (func)
+                func->accept(*this);
+        }
     }
 };
 
@@ -906,19 +1079,19 @@ public:
         program.accept(*this);
     }
 
-    void generateFunction(const FunctionNode& fn)
+    void generateFunction(const FunctionNode& func)
     {
         std::string retTy;
-        if (fn.returnType().kind == TypeDesc::Kind::Builtin)
-            retTy = llvmType(fn.returnType().builtin);
+        if (func.returnType().kind == TypeDesc::Kind::Builtin)
+            retTy = llvmType(func.returnType().builtin);
         else
-            retTy = "%struct." + fn.returnType().structName;
+            retTy = "%struct." + func.returnType().structName;
 
-        ctx.ir << "define " << retTy << " @" << fn.name() << "(";
-        for (size_t i = 0; i < fn.params().size(); ++i)
+        ctx.ir << "define " << retTy << " @" << func.name() << "(";
+        for (size_t i = 0; i < func.params().size(); ++i)
         {
             if (i > 0) ctx.ir << ", ";
-            const auto& p = fn.params()[i];
+            const auto& p = func.params()[i];
             if (p.type.kind == TypeDesc::Kind::Builtin)
                 ctx.ir << llvmType(p.type.builtin) << " %" << p.name;
             else
@@ -926,7 +1099,7 @@ public:
         }
         ctx.ir << ") {\n";
 
-        auto fit = functions.find(fn.name());
+        auto fit = functions.find(func.name());
         if (fit != functions.end())
         {
             for (const auto& p : fit->second.params)
@@ -945,20 +1118,25 @@ public:
             }
         }
 
-        inFunction = true;
+    inFunction = true;
+    currentMemberMaster = func.isMember() ? func.masterStruct() : "";
+    currentMemberFunctionName = func.name();
+    selfSymbolId = InvalidSymbolID;
         currentBlockTerminated = false;
-        functionReturnType = fn.returnType();
+        functionReturnType = func.returnType();
         bool fallsThrough = true;
-        if (fn.body())
-            fallsThrough = generateBlock(*fn.body(), "");
+        if (func.body())
+            fallsThrough = generateBlock(*func.body(), "");
         if (fallsThrough)
         {
-            if (fn.returnType().kind == TypeDesc::Kind::Builtin)
-                emitInstruction(std::string("ret ") + llvmType(fn.returnType().builtin) + " 0");
+            if (func.returnType().kind == TypeDesc::Kind::Builtin)
+                emitInstruction(std::string("ret ") + llvmType(func.returnType().builtin) + " 0");
             else
-                emitInstruction("ret %struct." + fn.returnType().structName + " zeroinitializer");
+                emitInstruction("ret %struct." + func.returnType().structName + " zeroinitializer");
         }
         inFunction = false;
+        currentMemberMaster.clear();
+        currentMemberFunctionName.clear();
         ctx.ir << "}\n";
     }
 
@@ -969,9 +1147,9 @@ public:
             for (const auto& stmt : node.statements())
             {
                 if (!stmt) continue;
-                if (const auto* fn = dynamic_cast<const FunctionNode*>(stmt.get()))
+                if (const auto* func = dynamic_cast<const FunctionNode*>(stmt.get()))
                 {
-                    visitFunction(*fn);
+                    visitFunction(*func);
                     continue;
                 }
                 if (const auto* sd = dynamic_cast<const StructDeclNode*>(stmt.get()))
@@ -1091,6 +1269,11 @@ public:
                     ctx.ir << "%struct." << f.type.structName;
             }
             ctx.ir << "}\n";
+
+            for (const auto& mf : node.functions())
+            {
+                if (mf) generateFunction(*mf);
+            }
             return;
         }
 
@@ -1105,6 +1288,11 @@ public:
                 ctx.ir << "%struct." << f.type.structName;
         }
         ctx.ir << "}\n";
+
+        for (const auto& mf : node.functions())
+        {
+            if (mf) generateFunction(*mf);
+        }
     }
 
     void visitAssign(const AssignNode& node) override
@@ -1214,6 +1402,99 @@ public:
             pushValue({tmp, true, ValueType::Invalid, f.returnType.structName});
         else
             pushValue({tmp, false, f.returnType.builtin, ""});
+    }
+
+    void visitMemberFunctionCall(const MemberFunctionCallNode& node) override
+    {
+        SymbolID baseId = node.baseSymbolId();
+        if (baseId == InvalidSymbolID)
+        {
+            pushValue({zeroLiteral(ValueType::Invalid), false, ValueType::Invalid, ""});
+            return;
+        }
+        CodegenVariable& baseVar = getVariable(baseId);
+        ensureAllocated(baseVar);
+
+        TypeDesc current = baseVar.type;
+        string basePtr = baseVar.pointer;
+        for (const std::string& funcName : node.fieldChain())
+        {
+            auto it = structs.find(current.structName);
+            if (it == structs.end())
+            {
+                pushValue({zeroLiteral(ValueType::Invalid), false, ValueType::Invalid, ""});
+                return;
+            }
+            int idx = -1; TypeDesc nextType = TypeDesc::Builtin(ValueType::Invalid);
+            for (size_t i = 0; i < it->second.fields.size(); ++i)
+            {
+                if (it->second.fields[i].name == funcName) 
+                { 
+                    idx = (int)i; 
+                    nextType = it->second.fields[i].type; 
+                    break;
+                }
+            }
+            if (idx < 0) { pushValue({zeroLiteral(ValueType::Invalid), false, ValueType::Invalid, ""}); return; }
+            string gep = nextTemp();
+            emitInstruction(gep + " = getelementptr %struct." + it->second.name + ", %struct." + it->second.name + "* " + basePtr + ", i32 0, i32 " + std::to_string(idx));
+            basePtr = gep;
+            current = nextType;
+        }
+
+        string structVal = nextTemp();
+        emitInstruction(structVal + " = load %struct." + current.structName + ", %struct." + current.structName + "* " + basePtr);
+
+        const SemanticAnalyzer::FunctionInfo* funcInfo = nullptr;
+        auto it = functions.find(node.funcName());
+        if (it != functions.end() && it->second.isMember && it->second.masterStruct == current.structName)
+            funcInfo = &it->second;
+        if (!funcInfo)
+        {
+            for (auto& keyValue : functions)
+            {
+                if (keyValue.second.name == node.funcName() && keyValue.second.isMember && keyValue.second.masterStruct == current.structName)
+                { funcInfo = &keyValue.second; break; }
+            }
+        }
+        if (!funcInfo)
+        {
+            pushValue({zeroLiteral(ValueType::Invalid), false, ValueType::Invalid, ""});
+            return;
+        }
+        std::vector<CodegenValue> args;
+
+        args.push_back({structVal, true, ValueType::Invalid, current.structName});
+        for (size_t i = 0; i < node.args().size(); ++i)
+        {
+            const ExprNode* expr = node.args()[i].get();
+            expr->accept(*this);
+
+            CodegenValue cv = popValue();
+            if (i + 1 < funcInfo->params.size() && funcInfo->params[i+1].type.kind == TypeDesc::Kind::Builtin)
+                cv = ensureType(std::move(cv), funcInfo->params[i+1].type.builtin);
+
+            args.push_back(std::move(cv));
+        }
+        std::string retTyIR = (funcInfo->returnType.kind == TypeDesc::Kind::Struct) ? ("%struct." + funcInfo->returnType.structName) : llvmType(funcInfo->returnType.builtin);
+        std::string tmp = nextTemp();
+        std::ostringstream argss;
+        for (size_t i = 0; i < args.size(); ++i)
+        {
+            if (i > 0) 
+                argss << ", ";
+
+            const auto& formal = funcInfo->params[i];
+            if (formal.type.kind == TypeDesc::Kind::Struct)
+                argss << "%struct." << formal.type.structName << " " << args[i].operand;
+            else
+                argss << llvmType(formal.type.builtin) << " " << args[i].operand;
+        }
+        emitInstruction(tmp + " = call " + retTyIR + " @" + node.funcName() + "(" + argss.str() + ")");
+        if (funcInfo->returnType.kind == TypeDesc::Kind::Struct)
+            pushValue({tmp, true, ValueType::Invalid, funcInfo->returnType.structName});
+        else
+            pushValue({tmp, false, funcInfo->returnType.builtin, ""});
     }
 
     void visitIf(const IfNode& node) override
@@ -1327,6 +1608,53 @@ public:
         SymbolID symbolId = node.symbolId();
         if (symbolId == InvalidSymbolID)
         {
+            if (!currentMemberMaster.empty())
+            {
+                if (selfSymbolId == InvalidSymbolID)
+                {
+                    auto it = functions.find(currentMemberFunctionName);
+                    if (it != functions.end())
+                    {
+                        for (const auto& param : it->second.params)
+                        {
+                            if (param.name == "_self") 
+                            { 
+                                selfSymbolId = param.symbolId; 
+                                break; 
+                            }
+                        }
+                    }
+                }
+                if (selfSymbolId != InvalidSymbolID)
+                {
+                    auto sit = structs.find(currentMemberMaster);
+                    if (sit != structs.end())
+                    {
+                        int idx = -1;
+                        TypeDesc ftype = TypeDesc::Builtin(ValueType::Invalid);
+
+                        for (size_t i = 0; i < sit->second.fields.size(); ++i)
+                        {
+                            if (sit->second.fields[i].name == node.name()) 
+                            { 
+                                idx = (int)i; ftype = sit->second.fields[i].type; 
+                                break; 
+                            }
+                        }
+                        if (idx >= 0 && ftype.kind == TypeDesc::Kind::Builtin)
+                        {
+                            CodegenVariable& selfVar = getVariable(selfSymbolId);
+                            ensureAllocated(selfVar);
+                            string gep = nextTemp();
+                            emitInstruction(gep + " = getelementptr %struct." + currentMemberMaster + ", %struct." + currentMemberMaster + "* " + selfVar.pointer + ", i32 0, i32 " + std::to_string(idx));
+                            string tmp2 = nextTemp();
+                            emitInstruction(tmp2 + " = load " + llvmType(ftype.builtin) + ", " + llvmType(ftype.builtin) + "* " + gep);
+                            pushValue({tmp2, false, ftype.builtin, ""});
+                            return;
+                        }
+                    }
+                }
+            }
             pushValue({"0", false, ValueType::Invalid, ""});
             return;
         }
@@ -1345,8 +1673,7 @@ public:
         string tmp = nextTemp();
         if (var.type.kind == TypeDesc::Kind::Builtin)
         {
-            emitInstruction(tmp + " = load " + llvmType(var.type.builtin) + ", " +
-                            llvmType(var.type.builtin) + "* " + var.pointer);
+            emitInstruction(tmp + " = load " + llvmType(var.type.builtin) + ", " + llvmType(var.type.builtin) + "* " + var.pointer);
             pushValue({tmp, false, var.type.builtin, ""});
         }
         else
@@ -1448,14 +1775,14 @@ private:
 
         const auto& baseVar = variables[sid];
         TypeDesc cur = baseVar.type;
-        for (const auto& fname : node.fieldChain())
+        for (const std::string& fieldName : node.fieldChain())
         {
             auto it = structs.find(cur.structName);
             if (it == structs.end()) return TypeDesc::Builtin(ValueType::Invalid);
             int idx = -1; TypeDesc nextType = TypeDesc::Builtin(ValueType::Invalid);
             for (size_t i = 0; i < it->second.fields.size(); ++i)
             {
-                if (it->second.fields[i].name == fname)
+                if (it->second.fields[i].name == fieldName)
                 { 
                     idx = static_cast<int>(i); 
                     nextType = it->second.fields[i].type; 
@@ -1479,14 +1806,14 @@ private:
         ensureAllocated(base);
         string ptr = base.pointer;
         TypeDesc cur = base.type;
-        for (const auto& fname : node.fieldChain())
+        for (const std::string& fieldName : node.fieldChain())
         {
             auto it = structs.find(cur.structName);
             if (it == structs.end()) return {};
             int idx = -1; TypeDesc nextType = TypeDesc::Builtin(ValueType::Invalid);
             for (size_t i = 0; i < it->second.fields.size(); ++i)
             {
-                if (it->second.fields[i].name == fname)
+                if (it->second.fields[i].name == fieldName)
                 { idx = static_cast<int>(i); nextType = it->second.fields[i].type; break; }
             }
             if (idx < 0) return {};
@@ -1635,6 +1962,9 @@ private:
     TypeDesc functionReturnType{TypeDesc::Builtin(ValueType::Invalid)};
     bool emittingTopLevel = false;
     std::unordered_set<string> emittedStructs;
+    std::string currentMemberMaster;
+    std::string currentMemberFunctionName;
+    SymbolID selfSymbolId = InvalidSymbolID;
 };
 
 int main(int argc, char** argv)

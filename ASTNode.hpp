@@ -23,6 +23,7 @@ class StructDeclNode;
 class FunctionNode;
 class FieldAccessNode;
 class FunctionCallNode;
+class MemberFunctionCallNode;
 
 enum class ValueType
 {
@@ -81,6 +82,7 @@ public:
 	virtual void visitAssignField(const class AssignFieldNode& node) = 0;
 	virtual void visitFieldAccess(const FieldAccessNode& node) = 0;
 	virtual void visitFunctionCall(const FunctionCallNode& node) = 0;
+	virtual void visitMemberFunctionCall(const MemberFunctionCallNode& node) = 0;
 };
 
 class ASTNode
@@ -100,11 +102,11 @@ class ExprNode : public ASTNode
 {
 public:
 	~ExprNode() override = default;
-	ValueType type() const { return m_type; }
-	void setType(ValueType type) const { m_type = type; }
+	ValueType type() const { return _type; }
+	void setType(ValueType type) const { _type = type; }
 
 private:
-	mutable ValueType m_type = ValueType::Invalid;
+	mutable ValueType _type = ValueType::Invalid;
 };
 
 class FactorNode : public ExprNode
@@ -119,16 +121,16 @@ public:
 	using StmtList = std::vector<std::unique_ptr<StmtNode>>;
 
 	explicit ProgramNode(StmtList stmts, size_t scopeId = 0)
-		: m_statements(std::move(stmts)), m_scopeId(scopeId) {}
+		: _statements(std::move(stmts)), _scopeId(scopeId) {}
 
-	const StmtList& statements() const { return m_statements; }
-	size_t scopeId() const { return m_scopeId; }
+	const StmtList& statements() const { return _statements; }
+	size_t scopeId() const { return _scopeId; }
 
 	void accept(ASTVisitor& visitor) const override { visitor.visitProgram(*this); }
 
 private:
-	StmtList m_statements;
-	size_t m_scopeId;
+	StmtList _statements;
+	size_t _scopeId;
 };
 
 class BlockNode : public ASTNode
@@ -137,58 +139,58 @@ public:
 	using StmtList = std::vector<std::unique_ptr<StmtNode>>;
 
 	BlockNode(StmtList stmts, size_t scopeId)
-		: m_statements(std::move(stmts)), m_scopeId(scopeId) {}
+		: _statements(std::move(stmts)), _scopeId(scopeId) {}
 
-	const StmtList& statements() const { return m_statements; }
-	size_t scopeId() const { return m_scopeId; }
+	const StmtList& statements() const { return _statements; }
+	size_t scopeId() const { return _scopeId; }
 
 	void accept(ASTVisitor& visitor) const override { visitor.visitBlock(*this); }
 
 private:
-	StmtList m_statements;
-	size_t m_scopeId;
+	StmtList _statements;
+	size_t _scopeId;
 };
 
 class IDNode : public FactorNode
 {
 public:
-	explicit IDNode(std::string name) : m_name(std::move(name)) {}
+	explicit IDNode(std::string name) : _name(std::move(name)) {}
 
-	const std::string& name() const { return m_name; }
-	SymbolID symbolId() const { return m_symbolId; }
-	void setSymbolId(SymbolID id) const { m_symbolId = id; }
+	const std::string& name() const { return _name; }
+	SymbolID symbolId() const { return _symbolId; }
+	void setSymbolId(SymbolID id) const { _symbolId = id; }
 
 	void accept(ASTVisitor& visitor) const override { visitor.visitID(*this); }
 
 private:
-	std::string m_name;
-	mutable SymbolID m_symbolId = InvalidSymbolID;
+	std::string _name;
+	mutable SymbolID _symbolId = InvalidSymbolID;
 };
 
 class NumberNode : public FactorNode
 {
 public:
-	explicit NumberNode(std::int64_t value) : m_value(value) {}
+	explicit NumberNode(std::int64_t value) : _value(value) {}
 
-	std::int64_t value() const { return m_value; }
+	std::int64_t value() const { return _value; }
 
 	void accept(ASTVisitor& visitor) const override { visitor.visitNumber(*this); }
 
 private:
-	std::int64_t m_value;
+	std::int64_t _value;
 };
 
 class BoolLiteralNode : public FactorNode
 {
 public:
-	explicit BoolLiteralNode(bool value) : m_value(value) {}
+	explicit BoolLiteralNode(bool value) : _value(value) {}
 
-	bool value() const { return m_value; }
+	bool value() const { return _value; }
 
 	void accept(ASTVisitor& visitor) const override { visitor.visitBoolLiteral(*this); }
 
 private:
-	bool m_value;
+	bool _value;
 };
 
 class BinaryOpNode : public ExprNode
@@ -203,12 +205,8 @@ public:
 		NotEqual
 	};
 
-	BinaryOpNode(Operator op,
-				 std::unique_ptr<ExprNode> left,
-				 std::unique_ptr<ExprNode> right)
-		: opKind(op),
-		  leftExpr(std::move(left)),
-		  rightExpr(std::move(right)) {}
+	BinaryOpNode(Operator op, std::unique_ptr<ExprNode> left, std::unique_ptr<ExprNode> right)
+		: opKind(op), leftExpr(std::move(left)), rightExpr(std::move(right)) {}
 
 	Operator op() const { return opKind; }
 	const ExprNode* left() const { return leftExpr.get(); }
@@ -246,14 +244,8 @@ private:
 class DeclNode : public StmtNode
 {
 public:
-	DeclNode(TypeDesc type,
-			std::string identifier,
-			bool isMutable,
-			std::vector<std::unique_ptr<ExprNode>> initializers)
-		: declType(std::move(type)),
-		  varName(std::move(identifier)),
-		  mutableFlag(isMutable),
-		  initExprs(std::move(initializers)) {}
+	DeclNode(TypeDesc type, std::string identifier, bool isMutable, std::vector<std::unique_ptr<ExprNode>> initializers)
+		: declType(std::move(type)), varName(std::move(identifier)), mutableFlag(isMutable), initExprs(std::move(initializers)) {}
 
 	const TypeDesc& declaredType() const { return declType; }
 	const std::string& identifier() const { return varName; }
@@ -346,12 +338,8 @@ private:
 class IfNode : public StmtNode
 {
 public:
-	IfNode(std::unique_ptr<ExprNode> condition,
-	      std::unique_ptr<BlockNode> thenBlock,
-	      std::unique_ptr<BlockNode> elseBlock)
-				: condExpr(std::move(condition)),
-					thenBlk(std::move(thenBlock)),
-					elseBlk(std::move(elseBlock)) {}
+	IfNode(std::unique_ptr<ExprNode> condition, std::unique_ptr<BlockNode> thenBlock, std::unique_ptr<BlockNode> elseBlock)
+		: condExpr(std::move(condition)), thenBlk(std::move(thenBlock)), elseBlk(std::move(elseBlock)) {}
 
 		const ExprNode* condition() const { return condExpr.get(); }
 		const BlockNode* thenBlock() const { return thenBlk.get(); }
@@ -389,17 +377,19 @@ public:
 		bool isMutable = false;
 	};
 
-	StructDeclNode(std::string name, std::vector<Field> fields)
-		: structName(std::move(name)), structFields(std::move(fields)) {}
+	StructDeclNode(std::string name, std::vector<Field> fields, std::vector<std::unique_ptr<class FunctionNode>> methods = {})
+		: structName(std::move(name)), structFields(std::move(fields)), memberFunctions(std::move(methods)) {}
 
 	const std::string& name() const { return structName; }
 	const std::vector<Field>& fields() const { return structFields; }
+	const std::vector<std::unique_ptr<class FunctionNode>>& functions() const { return memberFunctions; }
 
 	void accept(ASTVisitor& visitor) const override { visitor.visitStructDecl(*this); }
 
 private:
 	std::string structName;
 	std::vector<Field> structFields;
+	std::vector<std::unique_ptr<class FunctionNode>> memberFunctions;
 };
 
 class FunctionNode : public StmtNode
@@ -412,22 +402,18 @@ public:
 		mutable SymbolID symbolId = InvalidSymbolID;
 	};
 
-	FunctionNode(std::string name,
-				 std::vector<Param> params,
-				 TypeDesc returnType,
-				 std::unique_ptr<BlockNode> body,
-				 size_t scopeId)
-		: funcName(std::move(name)),
-		  funcParams(std::move(params)),
-		  funcReturnType(std::move(returnType)),
-		  funcBody(std::move(body)),
-		  funcScopeId(scopeId) {}
+	FunctionNode(std::string name, std::vector<Param> params, TypeDesc returnType, std::unique_ptr<BlockNode> body,
+				 size_t scopeId, std::string masterStruct = {}) 
+				: funcName(std::move(name)), funcParams(std::move(params)), 
+				 funcReturnType(std::move(returnType)), funcBody(std::move(body)), funcScopeId(scopeId), master(std::move(masterStruct)) {}
 
 	const std::string& name() const { return funcName; }
 	const std::vector<Param>& params() const { return funcParams; }
 	const TypeDesc& returnType() const { return funcReturnType; }
 	const BlockNode* body() const { return funcBody.get(); }
 	size_t scopeId() const { return funcScopeId; }
+	bool isMember() const { return !master.empty(); }
+	const std::string& masterStruct() const { return master; }
 
 	void accept(ASTVisitor& visitor) const override { visitor.visitFunction(*this); }
 
@@ -437,4 +423,28 @@ private:
 	TypeDesc funcReturnType;
 	std::unique_ptr<BlockNode> funcBody;
 	size_t funcScopeId;
+	std::string master;
+};
+
+class MemberFunctionCallNode : public FactorNode
+{
+public:
+	MemberFunctionCallNode(std::string base, std::vector<std::string> chain, std::string func, std::vector<std::unique_ptr<ExprNode>> args)
+				: baseName(std::move(base)), _fields(std::move(chain)), _funcName(std::move(func)), arguments(std::move(args)) {}
+
+	const std::string& base() const { return baseName; }
+	const std::vector<std::string>& fieldChain() const { return _fields; }
+	const std::string& funcName() const { return _funcName; }
+	const std::vector<std::unique_ptr<ExprNode>>& args() const { return arguments; }
+	SymbolID baseSymbolId() const { return baseId; }
+	void setBaseSymbolId(SymbolID id) const { baseId = id; }
+
+	void accept(ASTVisitor& visitor) const override { visitor.visitMemberFunctionCall(*this); }
+
+private:
+	std::string baseName;
+	std::vector<std::string> _fields;
+	std::string _funcName;
+	std::vector<std::unique_ptr<ExprNode>> arguments;
+	mutable SymbolID baseId = InvalidSymbolID;
 };
