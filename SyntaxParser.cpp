@@ -462,6 +462,7 @@ std::unique_ptr<ExprNode> SyntaxParser::parsePrimary()
         {
             std::string name = token->lexeme;
             eat();
+
             if (match(TokenType::LParen))
             {
                 std::vector<std::unique_ptr<ExprNode>> args;
@@ -522,8 +523,45 @@ std::unique_ptr<ExprNode> SyntaxParser::parsePrimary()
                         return nullptr;
                     return std::make_unique<MemberFunctionCallNode>(std::move(name), std::move(chain), std::move(fnName), std::move(args));
                 }
+
+                if (peek() && peek()->type == TokenType::LParen)
+                {
+                    if (!chain.empty())
+                    {
+                        addError("Callable object syntax is only supported on plain variables, not on nested fields");
+                        return nullptr;
+                    }
+
+                    if (!expect(TokenType::LParen, "Expected '(' after callable object base"))
+                        return nullptr;
+
+                    std::vector<std::unique_ptr<ExprNode>> args;
+                    skipNewlines();
+                    if (peek() && peek()->type != TokenType::RParen)
+                    {
+                        while (true)
+                        {
+                            auto arg = parseExpr();
+                            if (!arg) return nullptr;
+                            args.push_back(std::move(arg));
+                            skipNewlines();
+                            if (match(TokenType::Comma)) { skipNewlines(); continue; }
+                            break;
+                        }
+                    }
+                    if (!expect(TokenType::RParen, "Expected ')' after arguments"))
+                        return nullptr;
+
+                    std::vector<std::string> callChain;
+                    callChain.push_back("call");
+                    std::string fnName = callChain.back();
+                    callChain.pop_back();
+                    return std::make_unique<MemberFunctionCallNode>(std::move(name), std::move(callChain), std::move(fnName), std::move(args));
+                }
+
                 return std::make_unique<FieldAccessNode>(std::move(name), std::move(chain));
             }
+
             return std::make_unique<IDNode>(std::move(name));
         }
         case TokenType::Number:

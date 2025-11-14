@@ -1,0 +1,2 @@
+struct Point { i32 x i32 y }
+return 0

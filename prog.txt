@@ -1,0 +1,8 @@
+struct Point {
+  i32 x
+  i32 y
+}
+
+i32 x { 40 }
+i32 y { 2 }
+Point p { 1, 2 }

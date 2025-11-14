@@ -1,0 +1,12 @@
+struct Point {
+  i32 mut x
+  i32 y
+
+  fn isXZero = () -> bool {
+    return x == 0
+  }
+}
+
+Point mut p { 5, 6 }
+p.x = 0
+return p.isXZero()
