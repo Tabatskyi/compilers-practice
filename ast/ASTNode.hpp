@@ -89,12 +89,17 @@ class ASTNode
 public:
 	virtual ~ASTNode() = default;
 	virtual void accept(ASTVisitor& visitor) const = 0;
+	virtual void setLine(std::size_t line) const = 0;
 };
 
 class StmtNode : public ASTNode
 {
 public:
 	~StmtNode() override = default;
+	void setLine(std::size_t line) const override { _line = line; }
+
+private:
+	mutable std::size_t _line = 0;
 };
 
 class ExprNode : public ASTNode
@@ -103,9 +108,11 @@ public:
 	~ExprNode() override = default;
 	ValueType type() const { return _type; }
 	void setType(ValueType type) const { _type = type; }
+	void setLine(std::size_t line) const override { _line = line; }
 
 private:
 	mutable ValueType _type = ValueType::Invalid;
+	mutable std::size_t _line = 0;
 };
 
 class FactorNode : public ExprNode
@@ -126,10 +133,12 @@ public:
 	size_t scopeId() const { return _scopeId; }
 
 	void accept(ASTVisitor& visitor) const override { visitor.visitProgram(*this); }
+	void setLine(std::size_t line) const override { _line = line; }
 
 private:
 	StmtList _statements;
 	size_t _scopeId;
+	mutable std::size_t _line = 0;
 };
 
 class BlockNode : public ASTNode
@@ -144,10 +153,12 @@ public:
 	size_t scopeId() const { return _scopeId; }
 
 	void accept(ASTVisitor& visitor) const override { visitor.visitBlock(*this); }
+	void setLine(std::size_t line) const override { _line = line; }
 
 private:
 	StmtList _statements;
 	size_t _scopeId;
+	mutable std::size_t _line = 0;
 };
 
 class IDNode : public FactorNode

@@ -1,5 +1,5 @@
-#include "Token.hpp"
-#include "SyntaxParser.hpp"
+#include "general/Token.hpp"
+#include "parser/SyntaxParser.hpp"
 
 #include <limits>
 #include <sstream>
@@ -1982,15 +1982,15 @@ int main(int argc, char** argv)
 
     if (!program || parser.hasErrors())
     {
-        const std::vector<std::string>& errs = parser.errors();
+        const std::vector<Diagnostic>& errs = parser.errors();
         if (errs.empty())
         {
             std::cerr << "Parse error: unable to build AST" << std::endl;
         }
         else
         {
-            for (const string& err : errs)
-                std::cerr << "Parse error: " << err << std::endl;
+            for (const Diagnostic& err : errs)
+                std::cerr << "Parse error: " << err.message << std::endl;
         }
         return 1;
     }

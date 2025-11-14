@@ -1,6 +1,11 @@
 #include "SyntaxParser.hpp"
 
-SyntaxParser::SyntaxParser(std::vector<Token> tokens): tokens(std::move(tokens)) {}
+SyntaxParser::SyntaxParser(std::vector<Token> tokens)
+    : tokens(std::move(tokens))
+{
+    if (!this->tokens.empty())
+        lastLine = this->tokens.front().line;
+}
 
 const Token* SyntaxParser::peek(size_t offset) const
 {
@@ -14,7 +19,9 @@ const Token* SyntaxParser::eat()
 {
     if (atEnd())
         return nullptr;
-    return& tokens[index++];
+    const Token* tok = &tokens[index++];
+    lastLine = tok->line;
+    return tok;
 }
 
 std::unique_ptr<ProgramNode> SyntaxParser::parseProgram()
@@ -108,6 +115,7 @@ std::unique_ptr<StmtNode> SyntaxParser::parseStmt()
 
 std::unique_ptr<ReturnNode> SyntaxParser::parseReturn()
 {
+    std::size_t line = currentLine();
     if (!expect(TokenType::Return, "Expected 'return'"))
         return nullptr;
 
@@ -116,11 +124,14 @@ std::unique_ptr<ReturnNode> SyntaxParser::parseReturn()
     if (!expr)
         return nullptr;
 
-    return std::make_unique<ReturnNode>(std::move(expr));
+    auto node = std::make_unique<ReturnNode>(std::move(expr));
+    node->setLine(line);
+    return node;
 }
 
 std::unique_ptr<IfNode> SyntaxParser::parseIf()
 {
+    std::size_t line = currentLine();
     if (!expect(TokenType::If, "Expected 'if'"))
         return nullptr;
 
@@ -145,11 +156,14 @@ std::unique_ptr<IfNode> SyntaxParser::parseIf()
         skipNewlines();
     }
 
-    return std::make_unique<IfNode>(std::move(condition), std::move(thenBlock), std::move(elseBlock));
+    auto node = std::make_unique<IfNode>(std::move(condition), std::move(thenBlock), std::move(elseBlock));
+    node->setLine(line);
+    return node;
 }
 
 std::unique_ptr<BlockNode> SyntaxParser::parseBlock(size_t scopeId)
 {
+    std::size_t line = currentLine();
     if (!expect(TokenType::BlockStart, "Expected '{' to start block"))
         return nullptr;
 
@@ -179,7 +193,9 @@ std::unique_ptr<BlockNode> SyntaxParser::parseBlock(size_t scopeId)
         skipNewlines();
     }
 
-    return std::make_unique<BlockNode>(std::move(statements), scopeId);
+    auto node = std::make_unique<BlockNode>(std::move(statements), scopeId);
+    node->setLine(line);
+    return node;
 }
 
 std::unique_ptr<DeclNode> SyntaxParser::parseDecl()
@@ -204,6 +220,7 @@ std::unique_ptr<DeclNode> SyntaxParser::parseDecl()
         return nullptr;
     }
     std::string identifier = identTok->lexeme;
+    std::size_t line = identTok->line;
     eat();
 
     skipNewlines();
@@ -244,8 +261,9 @@ std::unique_ptr<DeclNode> SyntaxParser::parseDecl()
         if (!expect(TokenType::BlockEnd, "Expected '}' after initializer expression"))
             return nullptr;
     }
-
-    return std::make_unique<DeclNode>(type, std::move(identifier), isMutable, std::move(initializers));
+    auto node = std::make_unique<DeclNode>(type, std::move(identifier), isMutable, std::move(initializers));
+    node->setLine(line);
+    return node;
 }
 
 TypeDesc SyntaxParser::parseType()
@@ -302,6 +320,7 @@ std::unique_ptr<StmtNode> SyntaxParser::parseAssign()
     }
 
     std::string identifier = identTok->lexeme;
+    std::size_t line = identTok->line;
     eat();
 
     std::vector<std::string> chain;
@@ -331,10 +350,15 @@ std::unique_ptr<StmtNode> SyntaxParser::parseAssign()
     if (!chain.empty())
     {
         auto target = std::make_unique<FieldAccessNode>(std::move(identifier), std::move(chain));
-        return std::make_unique<AssignFieldNode>(std::move(target), std::move(value));
+        target->setLine(line);
+        auto assign = std::make_unique<AssignFieldNode>(std::move(target), std::move(value));
+        assign->setLine(line);
+        return assign;
     }
 
-    return std::make_unique<AssignNode>(std::move(identifier), std::move(value));
+    auto node = std::make_unique<AssignNode>(std::move(identifier), std::move(value));
+    node->setLine(line);
+    return node;
 }
 
 std::unique_ptr<ExprNode> SyntaxParser::parseExpr()
@@ -356,7 +380,9 @@ std::unique_ptr<ExprNode> SyntaxParser::parseEquality()
             auto right = parseAdditive();
             if (!right)
                 return nullptr;
-            left = std::make_unique<BinaryOpNode>(BinaryOpNode::Operator::Equal, std::move(left), std::move(right));
+            auto node = std::make_unique<BinaryOpNode>(BinaryOpNode::Operator::Equal, std::move(left), std::move(right));
+            node->setLine(previousLine());
+            left = std::move(node);
             skipNewlines();
             continue;
         }
@@ -367,7 +393,9 @@ std::unique_ptr<ExprNode> SyntaxParser::parseEquality()
             auto right = parseAdditive();
             if (!right)
                 return nullptr;
-            left = std::make_unique<BinaryOpNode>(BinaryOpNode::Operator::NotEqual, std::move(left), std::move(right));
+            auto node = std::make_unique<BinaryOpNode>(BinaryOpNode::Operator::NotEqual, std::move(left), std::move(right));
+            node->setLine(previousLine());
+            left = std::move(node);
             skipNewlines();
             continue;
         }
@@ -392,7 +420,9 @@ std::unique_ptr<ExprNode> SyntaxParser::parseAdditive()
             auto right = parseMultiplicative();
             if (!right)
                 return nullptr;
-            left = std::make_unique<BinaryOpNode>(BinaryOpNode::Operator::Add, std::move(left), std::move(right));
+            auto node = std::make_unique<BinaryOpNode>(BinaryOpNode::Operator::Add, std::move(left), std::move(right));
+            node->setLine(previousLine());
+            left = std::move(node);
             skipNewlines();
             continue;
         }
@@ -403,7 +433,9 @@ std::unique_ptr<ExprNode> SyntaxParser::parseAdditive()
             auto right = parseMultiplicative();
             if (!right)
                 return nullptr;
-            left = std::make_unique<BinaryOpNode>(BinaryOpNode::Operator::Sub, std::move(left), std::move(right));
+            auto node = std::make_unique<BinaryOpNode>(BinaryOpNode::Operator::Sub, std::move(left), std::move(right));
+            node->setLine(previousLine());
+            left = std::move(node);
             skipNewlines();
             continue;
         }
@@ -426,7 +458,9 @@ std::unique_ptr<ExprNode> SyntaxParser::parseMultiplicative()
         auto right = parseUnary();
         if (!right)
             return nullptr;
-        left = std::make_unique<BinaryOpNode>(BinaryOpNode::Operator::Mul, std::move(left), std::move(right));
+        auto node = std::make_unique<BinaryOpNode>(BinaryOpNode::Operator::Mul, std::move(left), std::move(right));
+        node->setLine(previousLine());
+        left = std::move(node);
         skipNewlines();
     }
 
@@ -441,7 +475,9 @@ std::unique_ptr<ExprNode> SyntaxParser::parseUnary()
         auto operand = parseUnary();
         if (!operand)
             return nullptr;
-        return std::make_unique<UnaryOpNode>(UnaryOpNode::Operator::LogicalNot, std::move(operand));
+        auto node = std::make_unique<UnaryOpNode>(UnaryOpNode::Operator::LogicalNot, std::move(operand));
+        node->setLine(previousLine());
+        return node;
     }
 
     return parsePrimary();
@@ -743,9 +779,10 @@ bool SyntaxParser::atEnd() const
 bool SyntaxParser::match(TokenType type)
 {
     const Token* token = peek();
-    if (token&& token->type == type)
+    if (token && token->type == type)
     {
         ++index;
+        lastLine = token->line;
         return true;
     }
     return false;
@@ -760,6 +797,19 @@ bool SyntaxParser::expect(TokenType type, const std::string& message)
     return false;
 }
 
+std::size_t SyntaxParser::currentLine() const
+{
+    const Token* tok = peek();
+    if (tok)
+        return tok->line;
+    return lastLine;
+}
+
+std::size_t SyntaxParser::previousLine() const
+{
+    return lastLine;
+}
+
 void SyntaxParser::skipNewlines()
 {
     while (match(TokenType::Newline)) {}
@@ -770,7 +820,8 @@ size_t SyntaxParser::allocateScopeId()
     return nextScopeId++;
 }
 
-void SyntaxParser::addError(const std::string& message)
+void SyntaxParser::addError(const std::string& message, std::size_t explicitLine)
 {
-    errorList.push_back(message);
+    std::size_t line = explicitLine ? explicitLine : currentLine();
+    errorList.push_back(Diagnostic{message, line});
 }

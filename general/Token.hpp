@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -41,4 +42,5 @@ struct Token
 {
     std::string lexeme;
     TokenType type;
+    std::size_t line = 0;
 };
