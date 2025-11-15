@@ -27,12 +27,18 @@ TokenType classify(const std::string& ident)
 }
 }
 
-std::vector<Token> Lexer::tokenize(const std::string& source) const
+LexResult Lexer::tokenize(const std::string& source) const
 {
-    std::vector<Token> out;
+    LexResult result;
     enum class State { Start, Identifier, Number };
     State state = State::Start;
     std::string buffer;
+    std::size_t line = 1;
+    std::size_t tokenLine = line;
+
+    auto emitToken = [&result](std::string lexeme, TokenType type, std::size_t tokLine) {
+        result.tokens.push_back(Token{std::move(lexeme), type, tokLine});
+    };
 
     for (std::size_t i = 0; i <= source.size();)
     {
@@ -48,10 +54,16 @@ std::vector<Token> Lexer::tokenize(const std::string& source) const
                 ++i;
                 continue;
             }
+            if (c == '\r')
+            {
+                ++i;
+                continue;
+            }
             if (c == '\n')
             {
-                out.push_back(Token{"\n", TokenType::Newline});
+                emitToken("\n", TokenType::Newline, line);
                 ++i;
+                ++line;
                 continue;
             }
             if (std::isspace(static_cast<unsigned char>(c)))
@@ -70,31 +82,32 @@ std::vector<Token> Lexer::tokenize(const std::string& source) const
             }
             if (c == '=' && i + 1 < source.size() && source[i + 1] == '=')
             {
-                out.push_back(Token{"==", TokenType::Equals});
+                emitToken("==", TokenType::Equals, line);
                 i += 2;
                 continue;
             }
             if (c == '!' && i + 1 < source.size() && source[i + 1] == '=')
             {
-                out.push_back(Token{"!=", TokenType::NotEqual});
+                emitToken("!=", TokenType::NotEqual, line);
                 i += 2;
                 continue;
             }
             if (c == '!')
             {
-                out.push_back(Token{"!", TokenType::Not});
+                emitToken("!", TokenType::Not, line);
                 ++i;
                 continue;
             }
             if (c == '-' && i + 1 < source.size() && source[i + 1] == '>')
             {
-                out.push_back(Token{"->", TokenType::Arrow});
+                emitToken("->", TokenType::Arrow, line);
                 i += 2;
                 continue;
             }
             if (std::isalpha(static_cast<unsigned char>(c)))
             {
                 buffer.assign(1, c);
+                tokenLine = line;
                 state = State::Identifier;
                 ++i;
                 continue;
@@ -102,6 +115,7 @@ std::vector<Token> Lexer::tokenize(const std::string& source) const
             if (std::isdigit(static_cast<unsigned char>(c)))
             {
                 buffer.assign(1, c);
+                tokenLine = line;
                 state = State::Number;
                 ++i;
                 continue;
@@ -121,10 +135,11 @@ std::vector<Token> Lexer::tokenize(const std::string& source) const
             case '-': kind = TokenType::Sub; break;
             case '*': kind = TokenType::Mul; break;
             default:
+                result.errors.push_back(Diagnostic{"unknown symbol " + std::string(1, c), line});
                 ++i;
                 continue;
             }
-            out.push_back(Token{std::string(1, c), kind});
+            emitToken(std::string(1, c), kind, line);
             ++i;
             continue;
 
@@ -135,7 +150,7 @@ std::vector<Token> Lexer::tokenize(const std::string& source) const
                 ++i;
                 continue;
             }
-            out.push_back(Token{buffer, classify(buffer)});
+            emitToken(buffer, classify(buffer), tokenLine);
             buffer.clear();
             state = State::Start;
             continue;
@@ -147,13 +162,13 @@ std::vector<Token> Lexer::tokenize(const std::string& source) const
                 ++i;
                 continue;
             }
-            out.push_back(Token{buffer, TokenType::Number});
+            emitToken(buffer, TokenType::Number, tokenLine);
             buffer.clear();
             state = State::Start;
             continue;
         }
     }
 
-    out.push_back(Token{"", TokenType::EndOfFile});
-    return out;
+    emitToken("", TokenType::EndOfFile, line);
+    return result;
 }

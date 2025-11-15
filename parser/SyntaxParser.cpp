@@ -631,6 +631,7 @@ std::unique_ptr<StructDeclNode> SyntaxParser::parseStructDecl()
         return nullptr;
     }
     std::string structName = nameTok->lexeme;
+    std::size_t structLine = nameTok->line;
     eat();
 
     skipNewlines();
@@ -692,7 +693,9 @@ std::unique_ptr<StructDeclNode> SyntaxParser::parseStructDecl()
         
         fields.push_back(StructDeclNode::Field{std::move(fieldType), std::move(fieldName), isMutable});
     }
-    return std::make_unique<StructDeclNode>(std::move(structName), std::move(fields), std::move(methods));
+    auto node = std::make_unique<StructDeclNode>(std::move(structName), std::move(fields), std::move(methods));
+    node->setLine(structLine);
+    return node;
 }
 
 std::unique_ptr<FunctionNode> SyntaxParser::parseFunction(bool isMember, const std::string& masterStruct)
@@ -707,6 +710,7 @@ std::unique_ptr<FunctionNode> SyntaxParser::parseFunction(bool isMember, const s
         return nullptr;
     }
     std::string funcName = nameTok->lexeme;
+    std::size_t funcLine = nameTok->line;
     eat();
 
     if (!expect(TokenType::Assign, "Expected '=' after function name"))
@@ -767,8 +771,14 @@ std::unique_ptr<FunctionNode> SyntaxParser::parseFunction(bool isMember, const s
         return nullptr;
 
     if (isMember)
-        return std::make_unique<FunctionNode>(std::move(funcName), std::move(params), std::move(retType), std::move(body), body->scopeId(), masterStruct);
-    return std::make_unique<FunctionNode>(std::move(funcName), std::move(params), std::move(retType), std::move(body), body->scopeId());
+    {
+        auto node = std::make_unique<FunctionNode>(std::move(funcName), std::move(params), std::move(retType), std::move(body), body->scopeId(), masterStruct);
+        node->setLine(funcLine);
+        return node;
+    }
+    auto node = std::make_unique<FunctionNode>(std::move(funcName), std::move(params), std::move(retType), std::move(body), body->scopeId());
+    node->setLine(funcLine);
+    return node;
 }
 
 bool SyntaxParser::atEnd() const

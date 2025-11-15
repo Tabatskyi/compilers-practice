@@ -96,4 +96,3 @@ private:
 	std::string currentMemberFunctionName;
 	SymbolID selfSymbolId = InvalidSymbolID;
 };
-
