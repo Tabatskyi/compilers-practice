@@ -1,7 +1,0 @@
-struct Point
-{
-  i32 mut x
-  i32 mut y
-}
-
-return 0

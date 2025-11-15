@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../ast/ASTNode.hpp"
+#include "../ast/AST.hpp"
 #include "../general/Diagnostics.hpp"
 #include "../general/Token.hpp"
 

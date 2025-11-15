@@ -1,0 +1,99 @@
+#pragma once
+
+#include <sstream>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+
+#include "../ast/AST.hpp"
+#include "../semantic/Semantic.hpp"
+
+struct IRContext
+{
+	int tempId = 0;
+	std::ostringstream ir;
+};
+
+struct CodegenValue
+{
+	std::string operand;
+	bool isStruct = false;
+	ValueType type = ValueType::Invalid;
+	std::string structName;
+};
+
+struct CodegenVariable
+{
+	TypeDesc type{TypeDesc::Builtin(ValueType::Invalid)};
+	bool isMutable = false;
+	bool allocated = false;
+	bool initialized = false;
+	std::string pointer;
+};
+
+class CodeGenerator : public ASTVisitor
+{
+public:
+	CodeGenerator(IRContext& ctx,
+				 const std::unordered_map<SymbolID, VariableInfo>& symbols,
+				 const StructTable& structs,
+				 const FunctionTable& functions);
+
+	void emitTopLevel(const ProgramNode& program);
+	void generate(const ProgramNode& program);
+	void generateFunction(const FunctionNode& func);
+
+	void visitProgram(const ProgramNode& node) override;
+	void visitBlock(const BlockNode& node) override;
+	void visitFunction(const FunctionNode& node) override;
+	void visitDecl(const DeclNode& node) override;
+	void visitStructDecl(const StructDeclNode& node) override;
+	void visitAssign(const AssignNode& node) override;
+	void visitAssignField(const AssignFieldNode& node) override;
+	void visitFieldAccess(const FieldAccessNode& node) override;
+	void visitFunctionCall(const FunctionCallNode& node) override;
+	void visitMemberFunctionCall(const MemberFunctionCallNode& node) override;
+	void visitIf(const IfNode& node) override;
+	void visitReturn(const ReturnNode& node) override;
+	void visitBinaryOp(const BinaryOpNode& node) override;
+	void visitUnaryOp(const UnaryOpNode& node) override;
+	void visitID(const IDNode& node) override;
+	void visitNumber(const NumberNode& node) override;
+	void visitBoolLiteral(const BoolLiteralNode& node) override;
+
+private:
+	const FunctionInfo* findMemberFunction(const std::string& funcName, const std::string& structName) const;
+	std::string llvmType(ValueType type) const;
+	std::string zeroLiteral(ValueType type) const;
+	std::string nextTemp();
+	std::string nextLabel(const std::string& base);
+	void emitLabel(const std::string& label);
+	void emitInstruction(const std::string& text);
+	void pushValue(CodegenValue value);
+	CodegenValue popValue();
+	TypeDesc fieldTypeDesc(const FieldAccessNode& node);
+	std::string getFieldPointer(const FieldAccessNode& node);
+	CodegenVariable& getVariable(SymbolID id);
+	void ensureAllocated(CodegenVariable& var);
+	CodegenValue ensureType(CodegenValue value, ValueType target);
+	void storeValue(CodegenVariable& var, const CodegenValue& value);
+	void emitReturn(CodegenValue value);
+	bool generateBlock(const BlockNode& node, const std::string& exitLabel);
+
+	IRContext& ctx;
+	std::unordered_map<SymbolID, CodegenVariable> variables;
+	std::vector<CodegenValue> stack;
+	int labelId = 0;
+	bool currentBlockTerminated = false;
+	const StructTable& structs;
+	const FunctionTable& functions;
+	bool inFunction = false;
+	TypeDesc functionReturnType{TypeDesc::Builtin(ValueType::Invalid)};
+	bool emittingTopLevel = false;
+	std::unordered_set<std::string> emittedStructs;
+	std::string currentMemberMaster;
+	std::string currentMemberFunctionName;
+	SymbolID selfSymbolId = InvalidSymbolID;
+};
+

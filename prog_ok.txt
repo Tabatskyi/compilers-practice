@@ -1,3 +1,0 @@
-i32 mut x
-x = 5
-return x
