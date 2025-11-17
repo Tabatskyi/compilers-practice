@@ -4,7 +4,6 @@
 #include "semantic/Semantic.hpp"
 #include "semantic/SemanticAnalyzer.hpp"
 #include "general/Diagnostics.hpp"
-#include "general/Utils.hpp"
 
 #include <limits>
 #include <sstream>
