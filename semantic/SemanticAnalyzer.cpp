@@ -282,6 +282,43 @@ void SemanticAnalyzer::visitAssign(const AssignNode& node)
     SymbolID symbolId = resolveSymbol(node.identifier());
     if (symbolId == InvalidSymbolID)
     {
+        if (inFunction && !currentMemberMaster.empty())
+        {
+            auto it = structTable.find(currentMemberMaster);
+            if (it != structTable.end())
+            {
+                bool foundField = false;
+                TypeDesc fieldType;
+                bool fieldMutable = false;
+                for (const StructFieldInfo& field : it->second.fields)
+                {
+                    if (field.name == node.identifier())
+                    {
+                        foundField = true;
+                        fieldType = field.type;
+                        fieldMutable = field.isMutable;
+                        break;
+                    }
+                }
+
+                if (foundField)
+                {
+                    if (!fieldMutable)
+                        addError("Field '" + node.identifier() + "' is immutable", node);
+
+                    if (const ExprNode* value = node.value())
+                    {
+                        value->accept(*this);
+                        if (!isAssignable(fieldType.builtin, value->type()))
+                        {
+                            addError("Cannot assign value of type " + typeToString(value->type()) + " to field '" + node.identifier() + "' of type " + typeToString(fieldType.builtin), value);
+                        }
+                    }
+                    return;
+                }
+            }
+        }
+
         addError("Assignment to undeclared variable '" + node.identifier() + "'", node);
     }
     else
@@ -290,7 +327,7 @@ void SemanticAnalyzer::visitAssign(const AssignNode& node)
         if (!info.isMutable)
             addError("Variable '" + node.identifier() + "' is immutable", node);
         if (info.type.kind == TypeDesc::Kind::Struct)
-            addError("Assignment to struct variables is not supported in this task", node);
+            addError("Assignment to struct variables is not supported", node);
         node.setSymbolId(symbolId);
     }
 
@@ -303,8 +340,7 @@ void SemanticAnalyzer::visitAssign(const AssignNode& node)
             ValueType valueType = value->type();
             if (info.type.kind != TypeDesc::Kind::Builtin || !isAssignable(info.type.builtin, valueType))
             {
-                addError("Cannot assign value of type " + typeToString(valueType) +
-                         " to variable '" + node.identifier() + "' of type " + (info.type.kind == TypeDesc::Kind::Builtin ? typeToString(info.type.builtin) : ("struct " + info.type.structName)), value);
+                addError("Cannot assign value of type " + typeToString(valueType) + " to variable '" + node.identifier() + "' of type " + (info.type.kind == TypeDesc::Kind::Builtin ? typeToString(info.type.builtin) : ("struct " + info.type.structName)), value);
             }
         }
     }
