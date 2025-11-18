@@ -1,31 +1,15 @@
 #include "Lexer.hpp"
 
-#include <cctype>
-#include <unordered_map>
-
-namespace
-{
-const std::unordered_map<std::string, TokenType> kKeywordMap = {
-    {"var", TokenType::Var},
-    {"struct", TokenType::Struct},
-    {"fn", TokenType::Fn},
-    {"mut", TokenType::Mut},
-    {"return", TokenType::Return},
-    {"if", TokenType::If},
-    {"else", TokenType::Else},
-    {"i32", TokenType::I32},
-    {"i64", TokenType::I64},
-    {"bool", TokenType::Bool},
-    {"true", TokenType::True},
-    {"false", TokenType::False},
-};
-
 TokenType classify(const std::string& ident)
 {
-    auto it = kKeywordMap.find(ident);
-    return (it != kKeywordMap.end()) ? it->second : TokenType::Identifier;
+    auto it = keywordMap.find(ident);
+    return (it != keywordMap.end()) ? it->second : TokenType::Identifier;
 }
-}
+
+void emitToken(std::string lexeme, TokenType type, std::size_t tokenLine, LexResult& result) 
+{
+    result.tokens.push_back(Token{std::move(lexeme), type, tokenLine});
+};
 
 LexResult Lexer::tokenize(const std::string& source) const
 {
@@ -36,13 +20,9 @@ LexResult Lexer::tokenize(const std::string& source) const
     std::size_t line = 1;
     std::size_t tokenLine = line;
 
-    auto emitToken = [&result](std::string lexeme, TokenType type, std::size_t tokLine) {
-        result.tokens.push_back(Token{std::move(lexeme), type, tokLine});
-    };
-
     for (std::size_t i = 0; i <= source.size();)
     {
-        char c = (i < source.size()) ? source[i] : '\0';
+        char ch = (i < source.size()) ? source[i] : '\0';
         bool atEnd = (i == source.size());
         TokenType kind;
 
@@ -54,24 +34,24 @@ LexResult Lexer::tokenize(const std::string& source) const
                 ++i;
                 continue;
             }
-            if (c == '\r')
+            if (ch == '\r')
             {
                 ++i;
                 continue;
             }
-            if (c == '\n')
+            if (ch == '\n')
             {
-                emitToken("\n", TokenType::Newline, line);
+                emitToken("\n", TokenType::Newline, line, result);
                 ++i;
                 ++line;
                 continue;
             }
-            if (std::isspace(static_cast<unsigned char>(c)))
+            if (std::isspace(static_cast<unsigned char>(ch)))
             {
                 ++i;
                 continue;
             }
-            if (c == '/' && i + 1 < source.size() && source[i + 1] == '/')
+            if (ch == '/' && i + 1 < source.size() && source[i + 1] == '/')
             {
                 i += 2;
                 while (i < source.size() && source[i] != '\n')
@@ -80,41 +60,41 @@ LexResult Lexer::tokenize(const std::string& source) const
                 }
                 continue;
             }
-            if (c == '=' && i + 1 < source.size() && source[i + 1] == '=')
+            if (ch == '=' && i + 1 < source.size() && source[i + 1] == '=')
             {
-                emitToken("==", TokenType::Equals, line);
+                emitToken("==", TokenType::Equals, line, result);
                 i += 2;
                 continue;
             }
-            if (c == '!' && i + 1 < source.size() && source[i + 1] == '=')
+            if (ch == '!' && i + 1 < source.size() && source[i + 1] == '=')
             {
-                emitToken("!=", TokenType::NotEqual, line);
+                emitToken("!=", TokenType::NotEqual, line, result);
                 i += 2;
                 continue;
             }
-            if (c == '!')
+            if (ch == '!')
             {
-                emitToken("!", TokenType::Not, line);
+                emitToken("!", TokenType::Not, line, result);
                 ++i;
                 continue;
             }
-            if (c == '-' && i + 1 < source.size() && source[i + 1] == '>')
+            if (ch == '-' && i + 1 < source.size() && source[i + 1] == '>')
             {
-                emitToken("->", TokenType::Arrow, line);
+                emitToken("->", TokenType::Arrow, line, result);
                 i += 2;
                 continue;
             }
-            if (std::isalpha(static_cast<unsigned char>(c)))
+            if (std::isalpha(static_cast<unsigned char>(ch)))
             {
-                buffer.assign(1, c);
+                buffer.assign(1, ch);
                 tokenLine = line;
                 state = State::Identifier;
                 ++i;
                 continue;
             }
-            if (std::isdigit(static_cast<unsigned char>(c)))
+            if (std::isdigit(static_cast<unsigned char>(ch)))
             {
-                buffer.assign(1, c);
+                buffer.assign(1, ch);
                 tokenLine = line;
                 state = State::Number;
                 ++i;
@@ -122,7 +102,7 @@ LexResult Lexer::tokenize(const std::string& source) const
             }
 
             kind = TokenType::Newline;
-            switch (c)
+            switch (ch)
             {
             case '{': kind = TokenType::BlockStart; break;
             case '}': kind = TokenType::BlockEnd; break;
@@ -135,40 +115,40 @@ LexResult Lexer::tokenize(const std::string& source) const
             case '-': kind = TokenType::Sub; break;
             case '*': kind = TokenType::Mul; break;
             default:
-                result.errors.push_back(Diagnostic{"unknown symbol " + std::string(1, c), line});
+                result.errors.push_back(Diagnostic{"unknown symbol " + std::string(1, ch), line});
                 ++i;
                 continue;
             }
-            emitToken(std::string(1, c), kind, line);
+            emitToken(std::string(1, ch), kind, line, result);
             ++i;
             continue;
 
         case State::Identifier:
-            if (!atEnd && std::isalnum(static_cast<unsigned char>(c)))
+            if (!atEnd && std::isalnum(static_cast<unsigned char>(ch)))
             {
-                buffer.push_back(c);
+                buffer.push_back(ch);
                 ++i;
                 continue;
             }
-            emitToken(buffer, classify(buffer), tokenLine);
+            emitToken(buffer, classify(buffer), tokenLine, result);
             buffer.clear();
             state = State::Start;
             continue;
 
         case State::Number:
-            if (!atEnd && std::isdigit(static_cast<unsigned char>(c)))
+            if (!atEnd && std::isdigit(static_cast<unsigned char>(ch)))
             {
-                buffer.push_back(c);
+                buffer.push_back(ch);
                 ++i;
                 continue;
             }
-            emitToken(buffer, TokenType::Number, tokenLine);
+            emitToken(buffer, TokenType::Number, tokenLine, result);
             buffer.clear();
             state = State::Start;
             continue;
         }
     }
 
-    emitToken("", TokenType::EndOfFile, line);
+    emitToken("", TokenType::EndOfFile, line, result);
     return result;
 }
