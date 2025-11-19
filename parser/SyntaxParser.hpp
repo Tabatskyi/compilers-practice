@@ -1,12 +1,8 @@
 #pragma once
 
-#include "ASTNode.hpp"
-#include "Token.hpp"
-
-#include <cstddef>
-#include <memory>
-#include <string>
-#include <vector>
+#include "../ast/AST.hpp"
+#include "../general/Diagnostics.hpp"
+#include "../general/Token.hpp"
 
 /// Syntax parser that consumes a token stream and produces an AST.
 class SyntaxParser
@@ -33,7 +29,9 @@ public:
 
     /// Parse either a declaration or assignment depending on current token.
     std::unique_ptr<DeclNode> parseDecl();
-    std::unique_ptr<AssignNode> parseAssign();
+    std::unique_ptr<StmtNode> parseAssign();
+    std::unique_ptr<StructDeclNode> parseStructDecl();
+    std::unique_ptr<FunctionNode> parseFunction(bool isMember = false, const std::string& ownerStruct = "");
 
     /// Parse expressions and sub-components.
     std::unique_ptr<ExprNode> parseExpr();
@@ -44,24 +42,29 @@ public:
     std::unique_ptr<ExprNode> parsePrimary();
 
     /// Whether parsing produced any errors.
-    bool hasErrors() const { return !m_errors.empty(); }
+    bool hasErrors() const { return !errorList.empty(); }
 
     /// Retrieve the list of diagnostic messages.
-    const std::vector<std::string>& errors() const { return m_errors; }
+    const std::vector<Diagnostic>& errors() const { return errorList; }
 
 private:
     bool atEnd() const;
     bool match(TokenType type);
     bool expect(TokenType type, const std::string& message);
 
+    std::size_t currentLine() const;
+    std::size_t previousLine() const;
+
     void skipNewlines();
-    ValueType parseType();
+    TypeDesc parseType();
     size_t allocateScopeId();
 
-    void addError(const std::string& message);
+    void addError(const std::string& message, std::size_t explicitLine = 0);
 
-    std::vector<Token> m_tokens;
-    size_t m_index = 0;
-    std::vector<std::string> m_errors;
-    size_t m_nextScopeId = 1;
+    std::vector<Token> tokens;
+    size_t index = 0;
+    std::vector<Diagnostic> errorList;
+    size_t nextScopeId = 1;
+    std::vector<std::string> knownStructs;
+    std::size_t lastLine = 1;
 };

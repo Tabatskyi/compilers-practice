@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -9,6 +10,8 @@ enum class TokenType
     Newline,
     Identifier,
     Number,
+    Fn,
+    Struct,
     Var,
     Mut,
     Return,
@@ -21,7 +24,12 @@ enum class TokenType
     False,
     BlockStart,
     BlockEnd,
+    LParen,
+    RParen,
+    Dot,
+    Comma,
     Assign,
+    Arrow,
     Equals,
     NotEqual,
     Not,
@@ -34,4 +42,5 @@ struct Token
 {
     std::string lexeme;
     TokenType type;
+    std::size_t line = 0;
 };
