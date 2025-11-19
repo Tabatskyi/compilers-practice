@@ -5,12 +5,7 @@
 #include "ASTVisitor.hpp"
 
 DeclNode::DeclNode(TypeDesc type, std::string identifier, bool isMutable, std::vector<std::unique_ptr<ExprNode>> initializers)
-    : _declType(std::move(type)),
-      _identifier(std::move(identifier)),
-      _isMutable(isMutable),
-      _initializers(std::move(initializers))
-{
-}
+    : _declType(std::move(type)), _identifier(std::move(identifier)), _isMutable(isMutable), _initializers(std::move(initializers)) {}
 
 const TypeDesc& DeclNode::declaredType() const
 {

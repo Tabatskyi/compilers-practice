@@ -19,12 +19,7 @@ public:
 		mutable SymbolID symbolId = InvalidSymbolID;
 	};
 
-	FunctionNode(std::string name,
-				 std::vector<Param> params,
-				 TypeDesc returnType,
-				 std::unique_ptr<BlockNode> body,
-				 std::size_t scopeId,
-				 std::string masterStruct = {});
+	FunctionNode(std::string name, std::vector<Param> params, TypeDesc returnType, std::unique_ptr<BlockNode> body, std::size_t scopeId, std::string masterStruct = {});
 
 	const std::string& name() const;
 	const std::vector<Param>& params() const;

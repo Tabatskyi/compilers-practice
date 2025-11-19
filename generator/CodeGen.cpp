@@ -314,6 +314,16 @@ void CodeGenerator::visitAssignField(const AssignFieldNode& node)
             value = ensureType(std::move(value), ftype.builtin);
             emitInstruction("store " + llvmType(ftype.builtin) + " " + value.operand + ", " + llvmType(ftype.builtin) + "* " + fieldPtr);
         }
+        else
+        {
+            if (!value.isStruct)
+            {
+                 string zeroTmp = nextTemp();
+                 emitInstruction(zeroTmp + " = insertvalue %struct." + ftype.structName + " undef, i32 0, 0");
+                 value = {zeroTmp, true, ValueType::Invalid, ftype.structName};
+            }
+            emitInstruction("store %struct." + ftype.structName + " " + value.operand + ", %struct." + ftype.structName + "* " + fieldPtr);
+        }
     }
 }
 
@@ -342,6 +352,54 @@ void CodeGenerator::visitFieldAccess(const FieldAccessNode& node)
 
 void CodeGenerator::visitFunctionCall(const FunctionCallNode& node)
 {
+    if (node.symbolId() != InvalidSymbolID)
+    {
+        CodegenVariable& var = getVariable(node.symbolId());
+        ensureAllocated(var);
+        
+        const auto* funcInfo = findMemberFunction("call", var.type.structName);
+        if (!funcInfo)
+        {
+            pushValue({zeroLiteral(ValueType::Invalid), false, ValueType::Invalid, ""});
+            return;
+        }
+        
+        std::vector<CodegenValue> args;
+        string tmp = nextTemp();
+        emitInstruction(tmp + " = load %struct." + var.type.structName + ", %struct." + var.type.structName + "* " + var.pointer);
+        args.push_back({tmp, true, ValueType::Invalid, var.type.structName});
+        
+        for (size_t i = 0; i < node.args().size(); ++i)
+        {
+            const ExprNode* e = node.args()[i].get();
+            e->accept(*this);
+            CodegenValue cv = popValue();
+            if (i + 1 < funcInfo->params.size() && funcInfo->params[i + 1].type.kind == TypeDesc::Kind::Builtin)
+                cv = ensureType(std::move(cv), funcInfo->params[i + 1].type.builtin);
+            args.push_back(std::move(cv));
+        }
+        
+        std::string retTyIR = (funcInfo->returnType.kind == TypeDesc::Kind::Struct) ? ("%struct." + funcInfo->returnType.structName) : llvmType(funcInfo->returnType.builtin);
+        std::string callTmp = nextTemp();
+        std::ostringstream argss;
+        for (size_t i = 0; i < args.size(); ++i)
+        {
+            if (i > 0) argss << ", ";
+            const auto& formal = funcInfo->params[i];
+            if (formal.type.kind == TypeDesc::Kind::Struct)
+                argss << "%struct." << formal.type.structName << " " << args[i].operand;
+            else
+                argss << llvmType(formal.type.builtin) << " " << args[i].operand;
+        }
+        emitInstruction(callTmp + " = call " + retTyIR + " @" + "call" + "(" + argss.str() + ")");
+        
+        if (funcInfo->returnType.kind == TypeDesc::Kind::Struct)
+            pushValue({callTmp, true, ValueType::Invalid, funcInfo->returnType.structName});
+        else
+            pushValue({callTmp, false, funcInfo->returnType.builtin, ""});
+        return;
+    }
+
     auto fit = functions.find(node.name());
     if (fit == functions.end())
     {
@@ -501,7 +559,10 @@ void CodeGenerator::visitIf(const IfNode& node)
         elseFallsThrough = generateBlock(*node.elseBlock(), endLabel);
     }
 
-    emitLabel(endLabel);
+    if (!hasElse || thenFallsThrough || elseFallsThrough)
+    {
+        emitLabel(endLabel);
+    }
 
     if (hasElse && !thenFallsThrough && !elseFallsThrough)
         currentBlockTerminated = true;

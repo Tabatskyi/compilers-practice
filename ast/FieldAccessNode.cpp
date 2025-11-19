@@ -5,9 +5,7 @@
 #include "ASTVisitor.hpp"
 
 FieldAccessNode::FieldAccessNode(std::string base, std::vector<std::string> chain)
-    : _base(std::move(base)), _fields(std::move(chain))
-{
-}
+    : _base(std::move(base)), _fields(std::move(chain)) {}
 
 const std::string& FieldAccessNode::base() const
 {

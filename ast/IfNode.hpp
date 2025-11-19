@@ -9,9 +9,7 @@
 class IfNode : public StmtNode
 {
 public:
-	IfNode(std::unique_ptr<ExprNode> condition,
-		   std::unique_ptr<BlockNode> thenBlock,
-		   std::unique_ptr<BlockNode> elseBlock);
+	IfNode(std::unique_ptr<ExprNode> condition, std::unique_ptr<BlockNode> thenBlock, std::unique_ptr<BlockNode> elseBlock);
 
 	const ExprNode* condition() const;
 	const BlockNode* thenBlock() const;

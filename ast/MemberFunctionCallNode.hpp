@@ -10,10 +10,7 @@
 class MemberFunctionCallNode : public FactorNode
 {
 public:
-	MemberFunctionCallNode(std::string base,
-						   std::vector<std::string> chain,
-						   std::string function,
-						   std::vector<std::unique_ptr<ExprNode>> arguments);
+	MemberFunctionCallNode(std::string base, std::vector<std::string> chain, std::string function, std::vector<std::unique_ptr<ExprNode>> arguments);
 
 	const std::string& base() const;
 	const std::vector<std::string>& fieldChain() const;

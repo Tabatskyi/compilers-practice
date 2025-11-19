@@ -4,16 +4,8 @@
 
 #include "ASTVisitor.hpp"
 
-MemberFunctionCallNode::MemberFunctionCallNode(std::string base,
-                                               std::vector<std::string> chain,
-                                               std::string function,
-                                               std::vector<std::unique_ptr<ExprNode>> arguments)
-    : _base(std::move(base)),
-      _fields(std::move(chain)),
-      _funcName(std::move(function)),
-      _args(std::move(arguments))
-{
-}
+MemberFunctionCallNode::MemberFunctionCallNode(std::string base, std::vector<std::string> chain, std::string function, std::vector<std::unique_ptr<ExprNode>> arguments)
+            : _base(std::move(base)), _fields(std::move(chain)), _funcName(std::move(function)), _args(std::move(arguments)) {}
 
 const std::string& MemberFunctionCallNode::base() const
 {

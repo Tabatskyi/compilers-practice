@@ -3,9 +3,7 @@
 #include "ASTVisitor.hpp"
 
 BoolLiteralNode::BoolLiteralNode(bool value)
-    : _value(value)
-{
-}
+    : _value(value) {}
 
 bool BoolLiteralNode::value() const
 {

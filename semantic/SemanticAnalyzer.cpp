@@ -108,10 +108,29 @@ const FunctionTable& SemanticAnalyzer::functions() const
 void SemanticAnalyzer::visitProgram(const ProgramNode& node)
 {
     enterScope(node.scopeId());
+    bool dead = false;
     for (const auto& stmt : node.statements())
     {
+        if (dead)
+        {
+            if (!dynamic_cast<const FunctionNode*>(stmt.get()) && !dynamic_cast<const StructDeclNode*>(stmt.get()))
+            {
+                addError("Unreachable code", stmt.get());
+                break;
+            }
+        }
+        
+        lastStmtReturns = false;
         if (stmt)
             stmt->accept(*this);
+            
+        if (dynamic_cast<const FunctionNode*>(stmt.get()) || dynamic_cast<const StructDeclNode*>(stmt.get()))
+        {
+            lastStmtReturns = false; 
+        }
+        
+        if (lastStmtReturns)
+            dead = true;
     }
     exitScope();
 }
@@ -119,11 +138,30 @@ void SemanticAnalyzer::visitProgram(const ProgramNode& node)
 void SemanticAnalyzer::visitBlock(const BlockNode& node)
 {
     enterScope(node.scopeId());
+    bool dead = false;
     for (const auto& stmt : node.statements())
     {
+        if (dead)
+        {
+            if (!dynamic_cast<const FunctionNode*>(stmt.get()) && !dynamic_cast<const StructDeclNode*>(stmt.get()))
+            {
+                addError("Unreachable code", stmt.get());
+                break;
+            }
+        }
+        lastStmtReturns = false;
         if (stmt)
             stmt->accept(*this);
+            
+        if (dynamic_cast<const FunctionNode*>(stmt.get()) || dynamic_cast<const StructDeclNode*>(stmt.get()))
+        {
+            lastStmtReturns = false;
+        }
+
+        if (lastStmtReturns)
+            dead = true;
     }
+    lastStmtReturns = dead;
     exitScope();
 }
 
@@ -326,8 +364,6 @@ void SemanticAnalyzer::visitAssign(const AssignNode& node)
         const auto& info = symbolTable[symbolId];
         if (!info.isMutable)
             addError("Variable '" + node.identifier() + "' is immutable", node);
-        if (info.type.kind == TypeDesc::Kind::Struct)
-            addError("Assignment to struct variables is not supported", node);
         node.setSymbolId(symbolId);
     }
 
@@ -338,9 +374,24 @@ void SemanticAnalyzer::visitAssign(const AssignNode& node)
         {
             const auto& info = symbolTable[symbolId];
             ValueType valueType = value->type();
-            if (info.type.kind != TypeDesc::Kind::Builtin || !isAssignable(info.type.builtin, valueType))
+            if (info.type.kind == TypeDesc::Kind::Builtin)
             {
-                addError("Cannot assign value of type " + typeToString(valueType) + " to variable '" + node.identifier() + "' of type " + (info.type.kind == TypeDesc::Kind::Builtin ? typeToString(info.type.builtin) : ("struct " + info.type.structName)), value);
+                if (!isAssignable(info.type.builtin, valueType))
+                    addError("Cannot assign value of type " + typeToString(valueType) + " to variable '" + node.identifier() + "' of type " + typeToString(info.type.builtin), value);
+            }
+            else
+            {
+                const IDNode* id = dynamic_cast<const IDNode*>(value);
+                if (id)
+                {
+                     SymbolID srcId = id->symbolId();
+                     if (srcId != InvalidSymbolID)
+                     {
+                         const auto& srcVar = symbolTable[srcId];
+                         if (srcVar.type.kind != TypeDesc::Kind::Struct || srcVar.type.structName != info.type.structName)
+                             addError("Cannot assign incompatible struct type", value);
+                     }
+                }
             }
         }
     }
@@ -355,14 +406,24 @@ void SemanticAnalyzer::visitIf(const IfNode& node)
             addError("Condition of if statement must be bool", cond);
     }
 
+    bool thenRet = false;
     if (const BlockNode* thenBlock = node.thenBlock())
+    {
         thenBlock->accept(*this);
+        thenRet = lastStmtReturns;
+    }
+    bool elseRet = false;
     if (const BlockNode* elseBlock = node.elseBlock())
+    {
         elseBlock->accept(*this);
+        elseRet = lastStmtReturns;
+    }
+    lastStmtReturns = thenRet && elseRet;
 }
 
 void SemanticAnalyzer::visitReturn(const ReturnNode& node)
 {
+    lastStmtReturns = true;
     if (!node.expr())
     {
         addError("Return statement requires an expression", node);
@@ -620,11 +681,6 @@ void SemanticAnalyzer::visitAssignField(const AssignFieldNode& node)
     if (!chainMutable)
         addError("Field access is immutable", node);
 
-    if (current.kind == TypeDesc::Kind::Struct)
-    {
-        addError("Assignment to struct fields is not supported in this task", node);
-    }
-
     if (const ExprNode* value = node.value())
     {
         value->accept(*this);
@@ -714,6 +770,25 @@ void SemanticAnalyzer::visitFunctionCall(const FunctionCallNode& node)
     auto it = functionTable.find(node.name());
     if (it == functionTable.end())
     {
+        SymbolID sid = resolveSymbol(node.name());
+        if (sid != InvalidSymbolID)
+        {
+            const_cast<FunctionCallNode&>(node).setSymbolId(sid);
+            const auto& var = symbolTable[sid];
+            if (var.type.kind == TypeDesc::Kind::Struct)
+            {
+                const FunctionInfo* funcInfo = findMemberFunction("call", var.type.structName);
+                if (funcInfo)
+                {
+                    validateCallArguments(node.args(), *funcInfo, 1, "Use of undeclared variable in callable object call");
+                    if (funcInfo->returnType.kind == TypeDesc::Kind::Builtin)
+                        const_cast<FunctionCallNode&>(node).setType(funcInfo->returnType.builtin);
+                    else
+                        const_cast<FunctionCallNode&>(node).setType(ValueType::Invalid);
+                    return;
+                }
+            }
+        }
         addError("Call to undeclared function '" + node.name() + "'", node);
         return;
     }

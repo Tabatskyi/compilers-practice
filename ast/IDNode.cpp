@@ -5,9 +5,7 @@
 #include "ASTVisitor.hpp"
 
 IDNode::IDNode(std::string name)
-    : _name(std::move(name))
-{
-}
+    : _name(std::move(name)) {}
 
 const std::string& IDNode::name() const
 {

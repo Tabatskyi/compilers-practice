@@ -60,12 +60,14 @@ private:
 
     const FunctionInfo* findMemberFunction(const std::string& funcName, const std::string& structName) const;
 
+    bool lastStmtReturns = false;
+
+    std::vector<Diagnostic> errorList;
+    std::vector<Diagnostic> warningList;
     std::unordered_map<SymbolID, VariableInfo> symbolTable;
     std::unordered_map<size_t, std::unordered_map<std::string, SymbolID>> scopeSymbols;
     std::vector<size_t> scopeStack;
     SymbolID nextSymbolId = 0;
-    std::vector<Diagnostic> errorList;
-    std::vector<Diagnostic> warningList;
     bool returnSeen = false;
     StructTable structTable;
     FunctionTable functionTable;

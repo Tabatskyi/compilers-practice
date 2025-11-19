@@ -223,8 +223,6 @@ std::unique_ptr<DeclNode> SyntaxParser::parseDecl()
     std::size_t line = identTok->line;
     eat();
 
-    skipNewlines();
-
     std::vector<std::unique_ptr<ExprNode>> initializers;
     if (match(TokenType::BlockStart))
     {
@@ -399,7 +397,6 @@ std::unique_ptr<ExprNode> SyntaxParser::parseEquality()
             skipNewlines();
             continue;
         }
-
         break;
     }
 
