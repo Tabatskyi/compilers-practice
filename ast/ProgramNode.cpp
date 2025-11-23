@@ -12,6 +12,11 @@ ProgramNode::StmtList& ProgramNode::statements()
     return _statements;
 }
 
+const ProgramNode::StmtList& ProgramNode::statements() const
+{
+    return _statements;
+}
+
 std::size_t ProgramNode::scopeId() const
 {
     return _scopeId;

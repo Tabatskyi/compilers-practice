@@ -1,8 +1,10 @@
 #pragma once
 
+#include "UsageAnalyzer.hpp"
+
 class ProgramNode;
 
-class UnusedSymbolCleaner
+class Cleaner
 {
 public:
     bool removeUnusedVariables(ProgramNode& program);

@@ -21,6 +21,6 @@
 #include "ProgramNode.hpp"
 #include "ReturnNode.hpp"
 #include "StmtNode.hpp"
-#include "StructDecNode.hpp"
+#include "StructDeclNode.hpp"
 #include "TypeDesc.hpp"
 #include "UnaryOpNode.hpp"

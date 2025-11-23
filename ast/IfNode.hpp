@@ -13,7 +13,9 @@ public:
 
 	const ExprNode* condition() const;
 	BlockNode* thenBlock();
+	const BlockNode* thenBlock() const;
 	BlockNode* elseBlock();
+	const BlockNode* elseBlock() const;
 	void accept(ASTVisitor& visitor) const override;
 
 private:

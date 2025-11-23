@@ -1,4 +1,4 @@
-#include "StructDecNode.hpp"
+#include "StructDeclNode.hpp"
 
 #include <utility>
 
@@ -24,6 +24,11 @@ const std::vector<StructDeclNode::Field>& StructDeclNode::fields() const
 }
 
 std::vector<std::unique_ptr<FunctionNode>>& StructDeclNode::functions()
+{
+    return _functions;
+}
+
+const std::vector<std::unique_ptr<FunctionNode>>& StructDeclNode::functions() const
 {
     return _functions;
 }

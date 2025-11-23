@@ -18,7 +18,18 @@ BlockNode* IfNode::thenBlock()
 }
 
 
+const BlockNode* IfNode::thenBlock() const
+{
+    return _thenBlock.get();
+}
+
+
 BlockNode* IfNode::elseBlock()
+{
+    return _elseBlock.get();
+}
+
+const BlockNode* IfNode::elseBlock() const
 {
     return _elseBlock.get();
 }

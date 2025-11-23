@@ -3,7 +3,7 @@
 #include "parser/SyntaxParser.hpp"
 #include "semantic/Semantic.hpp"
 #include "semantic/SemanticAnalyzer.hpp"
-#include "optimizer/UnusedSymbolCleaner.hpp"
+#include "optimizer/Cleaner.hpp"
 #include "general/Diagnostics.hpp"
 
 #include <limits>
@@ -92,7 +92,7 @@ int main(int argc, char** argv)
 
     printSuccess("Semantic analysis done.");
 
-    UnusedSymbolCleaner cleaner;
+    Cleaner cleaner;
     cleaner.removeUnusedVariables(*program);
 
     IRContext ctx;
