@@ -4,14 +4,8 @@
 
 #include "ASTVisitor.hpp"
 
-StructDeclNode::StructDeclNode(std::string name,
-                               std::vector<Field> fields,
-                               std::vector<std::unique_ptr<FunctionNode>> methods)
-    : _name(std::move(name)),
-      _fields(std::move(fields)),
-      _functions(std::move(methods))
-{
-}
+StructDeclNode::StructDeclNode(std::string name, std::vector<Field> fields, std::vector<std::unique_ptr<FunctionNode>> methods)
+                            : _name(std::move(name)), _fields(std::move(fields)), _functions(std::move(methods)) {}
 
 const std::string& StructDeclNode::name() const
 {
