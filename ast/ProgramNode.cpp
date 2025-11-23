@@ -7,7 +7,7 @@ ProgramNode::ProgramNode(StmtList statements, std::size_t scopeId)
 {
 }
 
-const ProgramNode::StmtList& ProgramNode::statements() const
+ProgramNode::StmtList& ProgramNode::statements()
 {
     return _statements;
 }

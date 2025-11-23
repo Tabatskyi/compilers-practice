@@ -12,7 +12,7 @@ public:
 
 	explicit ProgramNode(StmtList statements, std::size_t scopeId = 0);
 
-	const StmtList& statements() const;
+	StmtList& statements();
 	std::size_t scopeId() const;
 
 	void accept(ASTVisitor& visitor) const override;

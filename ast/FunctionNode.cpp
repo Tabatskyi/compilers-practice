@@ -22,7 +22,7 @@ const TypeDesc& FunctionNode::returnType() const
     return _returnType;
 }
 
-const BlockNode* FunctionNode::body() const
+BlockNode* FunctionNode::body()
 {
     return _body.get();
 }

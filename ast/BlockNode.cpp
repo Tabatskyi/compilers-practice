@@ -5,7 +5,7 @@
 BlockNode::BlockNode(StmtList statements, std::size_t scopeId)
     : _statements(std::move(statements)), _scopeId(scopeId) {}
 
-const BlockNode::StmtList& BlockNode::statements() const
+BlockNode::StmtList& BlockNode::statements()
 {
     return _statements;
 }

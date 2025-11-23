@@ -23,7 +23,7 @@ const std::vector<StructDeclNode::Field>& StructDeclNode::fields() const
     return _fields;
 }
 
-const std::vector<std::unique_ptr<FunctionNode>>& StructDeclNode::functions() const
+std::vector<std::unique_ptr<FunctionNode>>& StructDeclNode::functions()
 {
     return _functions;
 }

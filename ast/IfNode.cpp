@@ -12,12 +12,13 @@ const ExprNode* IfNode::condition() const
     return _condition.get();
 }
 
-const BlockNode* IfNode::thenBlock() const
+BlockNode* IfNode::thenBlock()
 {
     return _thenBlock.get();
 }
 
-const BlockNode* IfNode::elseBlock() const
+
+BlockNode* IfNode::elseBlock()
 {
     return _elseBlock.get();
 }
