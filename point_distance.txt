@@ -1,0 +1,60 @@
+struct Point
+{
+    i32 mut x
+    i32 mut y
+
+    fn distance2 = () -> i32
+    {
+        return x * x + y * y
+    }
+}
+
+fn printMatch = (Point p, i32 index, i32 target) -> i32
+{
+    i32 mut sink
+    sink = print(index)
+    sink = print(p.x)
+    sink = print(p.y)
+    sink = print(p.distance2())
+    sink = print(target)
+    return sink
+}
+
+Point mut p0{0, 0}
+Point mut p1{0, 0}
+Point mut p2{0, 0}
+
+p0.x = read()
+p0.y = read()
+p1.x = read()
+p1.y = read()
+p2.x = read()
+p2.y = read()
+
+i32 mut target
+target = read()
+
+i32 mut matches
+matches = 0
+
+i32 mut sink
+
+if p0.distance2() == target
+{
+    sink = printMatch(p0, 0, target)
+    matches = matches + 1
+}
+
+if p1.distance2() == target
+{
+    sink = printMatch(p1, 1, target)
+    matches = matches + 1
+}
+
+if p2.distance2() == target
+{
+    sink = printMatch(p2, 2, target)
+    matches = matches + 1
+}
+
+return matches

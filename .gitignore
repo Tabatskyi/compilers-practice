@@ -7,4 +7,4 @@ input.txt
 output
 test/
 *.sh
-*.txt
+build/

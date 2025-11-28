@@ -454,7 +454,7 @@ void CodeGenerator::visitFunctionCall(const FunctionCallNode& node)
 
 bool CodeGenerator::handleBuiltinFunctionCall(const FunctionCallNode& node, const FunctionInfo& info)
 {
-    if (info.name == "printInt")
+    if (info.name == "print")
     {
         if (node.args().empty())
         {
@@ -477,7 +477,7 @@ bool CodeGenerator::handleBuiltinFunctionCall(const FunctionCallNode& node, cons
         return true;
     }
 
-    if (info.name == "readInt")
+    if (info.name == "read")
     {
         string slot = nextTemp();
         emitInstruction(slot + " = alloca i32");
