@@ -80,6 +80,7 @@ private:
 	void storeValue(CodegenVariable& var, const CodegenValue& value);
 	void emitReturn(CodegenValue value);
 	bool generateBlock(const BlockNode& node, const std::string& exitLabel);
+	bool handleBuiltinFunctionCall(const FunctionCallNode& node, const FunctionInfo& info);
 
 	IRContext& ctx;
 	std::unordered_map<SymbolID, CodegenVariable> variables;

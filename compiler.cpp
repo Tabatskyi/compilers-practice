@@ -96,8 +96,11 @@ int main(int argc, char** argv)
     cleaner.removeUnusedVariables(*program);
 
     IRContext ctx;
-    ctx.ir << "declare i32 @printf(i8*, ...)\n\n";
-    ctx.ir << "@fmt = private constant [29 x i8] c\"Program exit with result %d\\0A\\00\"\n\n";
+    ctx.ir << "declare i32 @printf(i8*, ...)\n";
+    ctx.ir << "declare i32 @scanf(i8*, ...)\n\n";
+    ctx.ir << "@fmt = private constant [29 x i8] c\"Program exit with result %d\\0A\\00\"\n";
+    ctx.ir << "@fmt_print_i32 = private constant [4 x i8] c\"%d\\0A\\00\"\n";
+    ctx.ir << "@fmt_read_i32 = private constant [3 x i8] c\"%d\\00\"\n\n";
 
     CodeGenerator generator(ctx, semantic.symbols(), semantic.structs(), semantic.functions());
     generator.emitTopLevel(*program);

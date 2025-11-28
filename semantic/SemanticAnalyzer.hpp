@@ -53,12 +53,10 @@ private:
     void addWarning(const std::string& message, const ASTNode& node);
     void addWarning(const std::string& message, const ASTNode* node);
 
-    void validateCallArguments(const std::vector<std::unique_ptr<ExprNode>>& args,
-                               const FunctionInfo& funcInfo,
-                               size_t paramStartIndex,
-                               const std::string& undeclaredVarMessage);
+    void validateCallArguments(const std::vector<std::unique_ptr<ExprNode>>& args, const FunctionInfo& funcInfo, size_t paramStartIndex, const std::string& undeclaredVarMessage);
 
     const FunctionInfo* findMemberFunction(const std::string& funcName, const std::string& structName) const;
+    void registerBuiltins();
 
     bool lastStmtReturns = false;
 
