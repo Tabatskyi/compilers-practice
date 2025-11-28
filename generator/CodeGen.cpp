@@ -196,13 +196,13 @@ void CodeGenerator::visitDecl(const DeclNode& node)
         }
         else
         {
-            const auto& s = structs.at(var.type.structName);
-            size_t n = std::min(node.initializers().size(), s.fields.size());
+            const StructInfo& structInfo = structs.at(var.type.structName);
+            size_t n = std::min(node.initializers().size(), structInfo.fields.size());
             for (size_t i = 0; i < n; ++i)
             {
-                const auto& field = s.fields[i];
+                const StructFieldInfo& field = structInfo.fields[i];
                 string fieldPtr = nextTemp();
-                emitInstruction(fieldPtr + " = getelementptr %struct." + s.name + ", %struct." + s.name + "* " + var.pointer + ", i32 0, i32 " + std::to_string(i));
+                emitInstruction(fieldPtr + " = getelementptr %struct." + structInfo.name + ", %struct." + structInfo.name + "* " + var.pointer + ", i32 0, i32 " + std::to_string(i));
 
                 const ExprNode* expr = node.initializers()[i].get();
                 expr->accept(*this);
@@ -240,21 +240,21 @@ void CodeGenerator::visitStructDecl(const StructDeclNode& node)
     if (it != structs.end())
     {
         ctx.ir << "%struct." << node.name() << " = type {";
-        const auto& s = it->second;
-        for (size_t i = 0; i < s.fields.size(); ++i)
+        const StructInfo& structInfo = it->second;
+        for (size_t i = 0; i < structInfo.fields.size(); ++i)
         {
             if (i > 0) ctx.ir << ", ";
-            const auto& f = s.fields[i];
-            if (f.type.kind == TypeDesc::Kind::Builtin)
-                ctx.ir << llvmType(f.type.builtin);
+            const StructFieldInfo& field = structInfo.fields[i];
+            if (field.type.kind == TypeDesc::Kind::Builtin)
+                ctx.ir << llvmType(field.type.builtin);
             else
-                ctx.ir << "%struct." << f.type.structName;
+                ctx.ir << "%struct." << field.type.structName;
         }
         ctx.ir << "}\n";
 
-        for (const auto& mf : node.functions())
+        for (const std::unique_ptr<FunctionNode>& memberFunc : node.functions())
         {
-            if (mf) generateFunction(*mf);
+            if (memberFunc) generateFunction(*memberFunc);
         }
         return;
     }
@@ -263,17 +263,17 @@ void CodeGenerator::visitStructDecl(const StructDeclNode& node)
     for (size_t i = 0; i < node.fields().size(); ++i)
     {
         if (i > 0) ctx.ir << ", ";
-        const auto& f = node.fields()[i];
-        if (f.type.kind == TypeDesc::Kind::Builtin)
-            ctx.ir << llvmType(f.type.builtin);
+        const StructDeclNode::Field& field = node.fields()[i];
+        if (field.type.kind == TypeDesc::Kind::Builtin)
+            ctx.ir << llvmType(field.type.builtin);
         else
-            ctx.ir << "%struct." << f.type.structName;
+            ctx.ir << "%struct." << field.type.structName;
     }
     ctx.ir << "}\n";
 
-    for (const auto& mf : node.functions())
+    for (const std::unique_ptr<FunctionNode>& memberFunc : node.functions())
     {
-        if (mf) generateFunction(*mf);
+        if (memberFunc) generateFunction(*memberFunc);
     }
 }
 
@@ -371,12 +371,12 @@ void CodeGenerator::visitFunctionCall(const FunctionCallNode& node)
         
         for (size_t i = 0; i < node.args().size(); ++i)
         {
-            const ExprNode* e = node.args()[i].get();
-            e->accept(*this);
-            CodegenValue cv = popValue();
+            const ExprNode* expr = node.args()[i].get();
+            expr->accept(*this);
+            CodegenValue codegenValue = popValue();
             if (i + 1 < funcInfo->params.size() && funcInfo->params[i + 1].type.kind == TypeDesc::Kind::Builtin)
-                cv = ensureType(std::move(cv), funcInfo->params[i + 1].type.builtin);
-            args.push_back(std::move(cv));
+                codegenValue = ensureType(std::move(codegenValue), funcInfo->params[i + 1].type.builtin);
+            args.push_back(std::move(codegenValue));
         }
         
         std::string retTyIR = (funcInfo->returnType.kind == TypeDesc::Kind::Struct) ? ("%struct." + funcInfo->returnType.structName) : llvmType(funcInfo->returnType.builtin);
@@ -385,7 +385,7 @@ void CodeGenerator::visitFunctionCall(const FunctionCallNode& node)
         for (size_t i = 0; i < args.size(); ++i)
         {
             if (i > 0) argss << ", ";
-            const auto& formal = funcInfo->params[i];
+            const FunctionParamInfo& formal = funcInfo->params[i];
             if (formal.type.kind == TypeDesc::Kind::Struct)
                 argss << "%struct." << formal.type.structName << " " << args[i].operand;
             else
@@ -406,42 +406,91 @@ void CodeGenerator::visitFunctionCall(const FunctionCallNode& node)
         pushValue({zeroLiteral(ValueType::Invalid), false, ValueType::Invalid, ""});
         return;
     }
-    const auto& f = fit->second;
+    const FunctionInfo& function = fit->second;
+
+    if (function.isBuiltin)
+    {
+        if (handleBuiltinFunctionCall(node, function))
+            return;
+        pushValue({zeroLiteral(ValueType::Invalid), false, ValueType::Invalid, ""});
+        return;
+    }
 
     std::vector<CodegenValue> args;
     for (size_t i = 0; i < node.args().size(); ++i)
     {
-        const ExprNode* e = node.args()[i].get();
-        e->accept(*this);
-        CodegenValue cv = popValue();
-        if (i < f.params.size() && f.params[i].type.kind == TypeDesc::Kind::Builtin)
-            cv = ensureType(std::move(cv), f.params[i].type.builtin);
-        args.push_back(std::move(cv));
+        const ExprNode* expr = node.args()[i].get();
+        expr->accept(*this);
+        CodegenValue codegenValue = popValue();
+        if (i < function.params.size() && function.params[i].type.kind == TypeDesc::Kind::Builtin)
+            codegenValue = ensureType(std::move(codegenValue), function.params[i].type.builtin);
+        args.push_back(std::move(codegenValue));
     }
     std::string retTyIR;
-    bool retIsStruct = (f.returnType.kind == TypeDesc::Kind::Struct);
+    bool retIsStruct = (function.returnType.kind == TypeDesc::Kind::Struct);
     if (retIsStruct)
-        retTyIR = "%struct." + f.returnType.structName;
+        retTyIR = "%struct." + function.returnType.structName;
     else
-        retTyIR = llvmType(f.returnType.builtin);
+        retTyIR = llvmType(function.returnType.builtin);
 
     std::string tmp = nextTemp();
     std::ostringstream argss;
     for (size_t i = 0; i < args.size(); ++i)
     {
         if (i > 0) argss << ", ";
-        if (f.params[i].type.kind == TypeDesc::Kind::Struct)
-            argss << "%struct." << f.params[i].type.structName << " " << args[i].operand;
+        if (function.params[i].type.kind == TypeDesc::Kind::Struct)
+            argss << "%struct." << function.params[i].type.structName << " " << args[i].operand;
         else
-            argss << llvmType(f.params[i].type.builtin) << " " << args[i].operand;
+            argss << llvmType(function.params[i].type.builtin) << " " << args[i].operand;
     }
     std::string callLine = tmp + " = call " + retTyIR + " @" + node.name() + "(" + argss.str() + ")";
     emitInstruction(callLine);
 
     if (retIsStruct)
-        pushValue({tmp, true, ValueType::Invalid, f.returnType.structName});
+        pushValue({tmp, true, ValueType::Invalid, function.returnType.structName});
     else
-        pushValue({tmp, false, f.returnType.builtin, ""});
+        pushValue({tmp, false, function.returnType.builtin, ""});
+}
+
+bool CodeGenerator::handleBuiltinFunctionCall(const FunctionCallNode& node, const FunctionInfo& info)
+{
+    if (info.name == "printInt")
+    {
+        if (node.args().empty())
+        {
+            pushValue({zeroLiteral(ValueType::I32), false, ValueType::I32, ""});
+            return true;
+        }
+        const ExprNode* arg = node.args()[0].get();
+        if (!arg)
+        {
+            pushValue({zeroLiteral(ValueType::I32), false, ValueType::I32, ""});
+            return true;
+        }
+        arg->accept(*this);
+        CodegenValue value = popValue();
+        value = ensureType(std::move(value), ValueType::I32);
+        string fmtPtr = nextTemp();
+        emitInstruction(fmtPtr + " = getelementptr [4 x i8], [4 x i8]* @fmt_print_i32, i32 0, i32 0");
+        emitInstruction("call i32 (i8*, ...) @printf(i8* " + fmtPtr + ", i32 " + value.operand + ")");
+        pushValue(std::move(value));
+        return true;
+    }
+
+    if (info.name == "readInt")
+    {
+        string slot = nextTemp();
+        emitInstruction(slot + " = alloca i32");
+        string fmtPtr = nextTemp();
+        emitInstruction(fmtPtr + " = getelementptr [3 x i8], [3 x i8]* @fmt_read_i32, i32 0, i32 0");
+        emitInstruction("call i32 (i8*, ...) @scanf(i8* " + fmtPtr + ", i32* " + slot + ")");
+        string loaded = nextTemp();
+        emitInstruction(loaded + " = load i32, i32* " + slot);
+        pushValue({loaded, false, ValueType::I32, ""});
+        return true;
+    }
+
+    return false;
 }
 
 void CodeGenerator::visitMemberFunctionCall(const MemberFunctionCallNode& node)
@@ -503,11 +552,11 @@ void CodeGenerator::visitMemberFunctionCall(const MemberFunctionCallNode& node)
         const ExprNode* expr = node.args()[i].get();
         expr->accept(*this);
 
-        CodegenValue cv = popValue();
+        CodegenValue codegenValue = popValue();
         if (i + 1 < funcInfo->params.size() && funcInfo->params[i + 1].type.kind == TypeDesc::Kind::Builtin)
-            cv = ensureType(std::move(cv), funcInfo->params[i + 1].type.builtin);
+            codegenValue = ensureType(std::move(codegenValue), funcInfo->params[i + 1].type.builtin);
 
-        args.push_back(std::move(cv));
+        args.push_back(std::move(codegenValue));
     }
     std::string retTyIR = (funcInfo->returnType.kind == TypeDesc::Kind::Struct) ? ("%struct." + funcInfo->returnType.structName) : llvmType(funcInfo->returnType.builtin);
     std::string tmp = nextTemp();
@@ -716,8 +765,8 @@ void CodeGenerator::visitID(const IDNode& node)
     else
     {
         emitInstruction(tmp + " = load %struct." + var.type.structName + ", %struct." + var.type.structName + "* " + var.pointer);
-        CodegenValue cv; cv.operand = tmp; cv.isStruct = true; cv.structName = var.type.structName; cv.type = ValueType::Invalid;
-        pushValue(std::move(cv));
+        CodegenValue codegenValue; codegenValue.operand = tmp; codegenValue.isStruct = true; codegenValue.structName = var.type.structName; codegenValue.type = ValueType::Invalid;
+        pushValue(std::move(codegenValue));
     }
 }
 

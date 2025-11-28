@@ -43,6 +43,7 @@ struct FunctionInfo
     std::size_t scopeId = 0;
     std::string masterStruct;
     bool isMember = false;
+    bool isBuiltin = false;
 };
 
 using StructTable = std::unordered_map<std::string, StructInfo>;

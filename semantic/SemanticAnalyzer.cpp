@@ -65,6 +65,7 @@ bool SemanticAnalyzer::analyze(const ProgramNode& program)
     nextSymbolId = 0;
     returnSeen = false;
     functionTable.clear();
+    registerBuiltins();
 
     program.accept(*this);
 
@@ -951,6 +952,26 @@ void SemanticAnalyzer::validateCallArguments(const std::vector<std::unique_ptr<E
             }
         }
     }
+}
+
+void SemanticAnalyzer::registerBuiltins()
+{
+    FunctionInfo read;
+    read.name = "read";
+    read.returnType = TypeDesc::Builtin(ValueType::I32);
+    read.isBuiltin = true;
+    functionTable.emplace(read.name, std::move(read));
+
+    FunctionInfo print;
+    print.name = "print";
+    print.returnType = TypeDesc::Builtin(ValueType::I32);
+    FunctionParamInfo valueParam;
+    valueParam.type = TypeDesc::Builtin(ValueType::I32);
+    valueParam.name = "value";
+    valueParam.symbolId = InvalidSymbolID;
+    print.params.push_back(valueParam);
+    print.isBuiltin = true;
+    functionTable.emplace(print.name, std::move(print));
 }
 
 const FunctionInfo* SemanticAnalyzer::findMemberFunction(const string& funcName, const string& structName) const
