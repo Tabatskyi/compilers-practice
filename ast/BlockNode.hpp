@@ -12,6 +12,7 @@ public:
 
 	BlockNode(StmtList statements, std::size_t scopeId);
 
+	StmtList& statements();
 	const StmtList& statements() const;
 	std::size_t scopeId() const;
 

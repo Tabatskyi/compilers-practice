@@ -24,6 +24,7 @@ public:
 
 	const std::string& name() const;
 	const std::vector<Field>& fields() const;
+	std::vector<std::unique_ptr<class FunctionNode>>& functions();
 	const std::vector<std::unique_ptr<class FunctionNode>>& functions() const;
 
 	void accept(ASTVisitor& visitor) const override;

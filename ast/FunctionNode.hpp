@@ -24,6 +24,7 @@ public:
 	const std::string& name() const;
 	const std::vector<Param>& params() const;
 	const TypeDesc& returnType() const;
+	BlockNode* body();
 	const BlockNode* body() const;
 	std::size_t scopeId() const;
 	bool isMember() const;

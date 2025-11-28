@@ -12,9 +12,21 @@ const ExprNode* IfNode::condition() const
     return _condition.get();
 }
 
+BlockNode* IfNode::thenBlock()
+{
+    return _thenBlock.get();
+}
+
+
 const BlockNode* IfNode::thenBlock() const
 {
     return _thenBlock.get();
+}
+
+
+BlockNode* IfNode::elseBlock()
+{
+    return _elseBlock.get();
 }
 
 const BlockNode* IfNode::elseBlock() const

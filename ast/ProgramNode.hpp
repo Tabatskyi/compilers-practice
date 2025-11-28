@@ -12,6 +12,7 @@ public:
 
 	explicit ProgramNode(StmtList statements, std::size_t scopeId = 0);
 
+	StmtList& statements();
 	const StmtList& statements() const;
 	std::size_t scopeId() const;
 

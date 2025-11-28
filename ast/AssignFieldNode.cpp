@@ -4,10 +4,8 @@
 
 #include "ASTVisitor.hpp"
 
-AssignFieldNode::AssignFieldNode(std::unique_ptr<FieldAccessNode> target, std::unique_ptr<ExprNode> value)
-    : _target(std::move(target)), _value(std::move(value))
-{
-}
+AssignFieldNode::AssignFieldNode(std::unique_ptr<FieldAccessNode> target, std::unique_ptr<ExprNode> value) 
+            : _target(std::move(target)), _value(std::move(value)) {}
 
 const FieldAccessNode* AssignFieldNode::target() const
 {

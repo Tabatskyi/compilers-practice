@@ -3,6 +3,7 @@
 #include "parser/SyntaxParser.hpp"
 #include "semantic/Semantic.hpp"
 #include "semantic/SemanticAnalyzer.hpp"
+#include "optimizer/Cleaner.hpp"
 #include "general/Diagnostics.hpp"
 
 #include <limits>
@@ -90,6 +91,9 @@ int main(int argc, char** argv)
     }
 
     printSuccess("Semantic analysis done.");
+
+    Cleaner cleaner;
+    cleaner.removeUnusedVariables(*program);
 
     IRContext ctx;
     ctx.ir << "declare i32 @printf(i8*, ...)\n\n";
