@@ -31,11 +31,8 @@ ValueType comparisonOperandType(ValueType lhs, ValueType rhs)
 }
 }
 
-CodeGenerator::CodeGenerator(IRContext& ctx,
-                             const std::unordered_map<SymbolID, VariableInfo>& symbols,
-                             const StructTable& structs,
-                             const FunctionTable& functions)
-    : ctx(ctx), structs(structs), functions(functions)
+CodeGenerator::CodeGenerator(IRContext& ctx, const std::unordered_map<SymbolID, VariableInfo>& symbols, const StructTable& structs, const FunctionTable& functions)
+                            : ctx(ctx), structs(structs), functions(functions)
 {
     for (const auto& [id, info] : symbols)
     {
@@ -73,28 +70,28 @@ void CodeGenerator::generateFunction(const FunctionNode& func)
     for (size_t i = 0; i < func.params().size(); ++i)
     {
         if (i > 0) ctx.ir << ", ";
-        const auto& p = func.params()[i];
-        if (p.type.kind == TypeDesc::Kind::Builtin)
-            ctx.ir << llvmType(p.type.builtin) << " %" << p.name;
+        const FunctionNode::Param& param = func.params()[i];
+        if (param.type.kind == TypeDesc::Kind::Builtin)
+            ctx.ir << llvmType(param.type.builtin) << " %" << param.name;
         else
-            ctx.ir << "%struct." << p.type.structName << " %" << p.name;
+            ctx.ir << "%struct." << param.type.structName << " %" << param.name;
     }
     ctx.ir << ") {\n";
 
     auto fit = functions.find(func.name());
     if (fit != functions.end())
     {
-        for (const auto& p : fit->second.params)
+        for (const FunctionParamInfo& param : fit->second.params)
         {
-            CodegenVariable& var = getVariable(p.symbolId);
+            CodegenVariable& var = getVariable(param.symbolId);
             ensureAllocated(var);
-            if (p.type.kind == TypeDesc::Kind::Builtin)
+            if (param.type.kind == TypeDesc::Kind::Builtin)
             {
-                emitInstruction("store " + llvmType(p.type.builtin) + " %" + p.name + ", " + llvmType(p.type.builtin) + "* " + var.pointer);
+                emitInstruction("store " + llvmType(param.type.builtin) + " %" + param.name + ", " + llvmType(param.type.builtin) + "* " + var.pointer);
             }
             else
             {
-                emitInstruction("store %struct." + p.type.structName + " %" + p.name + ", %struct." + p.type.structName + "* " + var.pointer);
+                emitInstruction("store %struct." + param.type.structName + " %" + param.name + ", %struct." + param.type.structName + "* " + var.pointer);
             }
             var.initialized = true;
         }
@@ -126,24 +123,24 @@ void CodeGenerator::visitProgram(const ProgramNode& node)
 {
     if (emittingTopLevel)
     {
-        for (const auto& stmt : node.statements())
+        for (const std::unique_ptr<StmtNode>& stmt : node.statements())
         {
             if (!stmt) continue;
-            if (const auto* func = dynamic_cast<const FunctionNode*>(stmt.get()))
+            if (const FunctionNode* func = dynamic_cast<const FunctionNode*>(stmt.get()))
             {
                 visitFunction(*func);
                 continue;
             }
-            if (const auto* sd = dynamic_cast<const StructDeclNode*>(stmt.get()))
+            if (const StructDeclNode* structDecl = dynamic_cast<const StructDeclNode*>(stmt.get()))
             {
-                visitStructDecl(*sd);
+                visitStructDecl(*structDecl);
                 continue;
             }
         }
         return;
     }
 
-    for (const auto& stmt : node.statements())
+    for (const std::unique_ptr<StmtNode>& stmt : node.statements())
     {
         if (currentBlockTerminated)
             break;
@@ -357,7 +354,7 @@ void CodeGenerator::visitFunctionCall(const FunctionCallNode& node)
         CodegenVariable& var = getVariable(node.symbolId());
         ensureAllocated(var);
         
-        const auto* funcInfo = findMemberFunction("call", var.type.structName);
+        const FunctionInfo* funcInfo = findMemberFunction("call", var.type.structName);
         if (!funcInfo)
         {
             pushValue({zeroLiteral(ValueType::Invalid), false, ValueType::Invalid, ""});
@@ -384,7 +381,9 @@ void CodeGenerator::visitFunctionCall(const FunctionCallNode& node)
         std::ostringstream argss;
         for (size_t i = 0; i < args.size(); ++i)
         {
-            if (i > 0) argss << ", ";
+            if (i > 0) 
+                argss << ", ";
+
             const FunctionParamInfo& formal = funcInfo->params[i];
             if (formal.type.kind == TypeDesc::Kind::Struct)
                 argss << "%struct." << formal.type.structName << " " << args[i].operand;
@@ -538,7 +537,7 @@ void CodeGenerator::visitMemberFunctionCall(const MemberFunctionCallNode& node)
     string structVal = nextTemp();
     emitInstruction(structVal + " = load %struct." + current.structName + ", %struct." + current.structName + "* " + basePtr);
 
-    const auto* funcInfo = findMemberFunction(node.funcName(), current.structName);
+    const FunctionInfo* funcInfo = findMemberFunction(node.funcName(), current.structName);
     if (!funcInfo)
     {
         pushValue({zeroLiteral(ValueType::Invalid), false, ValueType::Invalid, ""});
@@ -566,7 +565,7 @@ void CodeGenerator::visitMemberFunctionCall(const MemberFunctionCallNode& node)
         if (i > 0)
             argss << ", ";
 
-        const auto& formal = funcInfo->params[i];
+        const FunctionParamInfo& formal = funcInfo->params[i];
         if (formal.type.kind == TypeDesc::Kind::Struct)
             argss << "%struct." << formal.type.structName << " " << args[i].operand;
         else
@@ -649,11 +648,10 @@ void CodeGenerator::visitBinaryOp(const BinaryOpNode& node)
             leftValue = ensureType(std::move(leftValue), targetType);
             rightValue = ensureType(std::move(rightValue), targetType);
 
-            const char* opInstr = (node.op() == BinaryOpNode::Operator::Add) ? "add" :
+            const char* opInstr = (node.op() == BinaryOpNode::Operator::Add) ? "add" : 
                                   (node.op() == BinaryOpNode::Operator::Sub) ? "sub" : "mul";
             string tmp = nextTemp();
-            emitInstruction(tmp + " = " + std::string(opInstr) + " " + llvmType(targetType) + " " +
-                            leftValue.operand + ", " + rightValue.operand);
+            emitInstruction(tmp + " = " + std::string(opInstr) + " " + llvmType(targetType) + " " + leftValue.operand + ", " + rightValue.operand);
             pushValue({tmp, false, targetType, ""});
             return;
         }
@@ -666,13 +664,11 @@ void CodeGenerator::visitBinaryOp(const BinaryOpNode& node)
 
             const char* cmp = (node.op() == BinaryOpNode::Operator::Equal) ? "icmp eq" : "icmp ne";
             string tmp = nextTemp();
-            emitInstruction(tmp + " = " + std::string(cmp) + " " + llvmType(operandType) + " " +
-                            leftValue.operand + ", " + rightValue.operand);
+            emitInstruction(tmp + " = " + std::string(cmp) + " " + llvmType(operandType) + " " + leftValue.operand + ", " + rightValue.operand);
             pushValue({tmp, false, ValueType::Bool, ""});
             return;
         }
     }
-
     pushValue({zeroLiteral(ValueType::Invalid), false, ValueType::Invalid, ""});
 }
 
@@ -700,7 +696,7 @@ void CodeGenerator::visitID(const IDNode& node)
                 auto it = functions.find(currentMemberFunctionName);
                 if (it != functions.end())
                 {
-                    for (const auto& param : it->second.params)
+                    for (const FunctionParamInfo& param : it->second.params)
                     {
                         if (param.name == "_self")
                         {
@@ -871,7 +867,7 @@ TypeDesc CodeGenerator::fieldTypeDesc(const FieldAccessNode& node)
     if (sid == InvalidSymbolID)
         return TypeDesc::Builtin(ValueType::Invalid);
 
-    const auto& baseVar = variables[sid];
+    const CodegenVariable& baseVar = variables[sid];
     TypeDesc cur = baseVar.type;
     for (const std::string& fieldName : node.fieldChain())
     {
@@ -1037,7 +1033,7 @@ bool CodeGenerator::generateBlock(const BlockNode& node, const std::string& exit
     bool savedTerminated = currentBlockTerminated;
     currentBlockTerminated = false;
 
-    for (const auto& stmt : node.statements())
+    for (const std::unique_ptr<StmtNode>& stmt : node.statements())
     {
         if (currentBlockTerminated)
             break;
